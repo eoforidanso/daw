@@ -12,7 +12,7 @@ const Icon = ({ d, w = 11, h = 11 }) => (
   <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}><path d={d} fill="currentColor"/></svg>
 );
 
-export default function TransportBar({ isPlaying, onPlayToggle, bpm, onBpmChange, onProjectOpen, onCloudOpen, onVersionOpen, onCollabOpen, onAudioOpen, onTutorialOpen, onExportOpen, projectName, lastSaved, collabSession }) {
+export default function TransportBar({ isPlaying, onPlayToggle, bpm, onBpmChange, onProjectOpen, onCloudOpen, onVersionOpen, onCollabOpen, onAudioOpen, onTutorialOpen, onExportOpen, onStemExport, projectName, lastSaved, collabSession, autoRecording, onAutoRecordToggle }) {
   const [isRecording, setIsRecording] = useState(false);
   const [isLooping, setIsLooping] = useState(true);
   const [isMetronome, setIsMetronome] = useState(false);
@@ -91,6 +91,12 @@ export default function TransportBar({ isPlaying, onPlayToggle, bpm, onBpmChange
         <button className={`transport-btn record-btn ${isRecording ? 'active' : ''}`} onClick={() => setIsRecording(r => !r)} title="Record">
           <svg width="11" height="11" viewBox="0 0 11 11"><circle cx="5.5" cy="5.5" r="4" fill="currentColor"/></svg>
         </button>
+        <button
+          className={`transport-btn ${autoRecording ? 'active' : ''}`}
+          onClick={onAutoRecordToggle}
+          title="Automation Record — records knob/fader moves as automation while playing"
+          style={{ fontSize: 6, fontFamily: 'var(--font-mono)', letterSpacing: '0.05em', color: autoRecording ? '#ff6bcc' : undefined, border: autoRecording ? '1px solid #ff6bcc' : undefined, background: autoRecording ? 'rgba(255,107,204,0.15)' : undefined }}
+        >A·REC</button>
         <button className={`transport-btn ${isLooping ? 'active' : ''}`} onClick={() => setIsLooping(l => !l)} title="Loop" style={{ fontSize: 14 }}>↺</button>
         <button className={`transport-btn ${isMetronome ? 'active' : ''}`} onClick={() => setIsMetronome(m => !m)} title="Metronome" style={{ fontSize: 12 }}>♩</button>
       </div>
@@ -134,6 +140,16 @@ export default function TransportBar({ isPlaying, onPlayToggle, bpm, onBpmChange
             <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'currentColor', flexShrink: 0 }} />
             {savedFlash ? 'AUTO-SAVED' : 'AUTO'}
           </div>
+        )}
+
+        {/* Stem export */}
+        {onStemExport && (
+          <button onClick={onStemExport} title="Export each track as a separate WAV stem"
+            style={{ height: 26, borderRadius: 3, padding: '0 7px', border: '1px solid var(--border-default)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontFamily: 'var(--font-mono)', fontSize: 7, letterSpacing: '0.1em', transition: 'all 0.1s' }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = '#c8a06e'; e.currentTarget.style.color = '#c8a06e'; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-default)'; e.currentTarget.style.color = 'var(--text-muted)'; }}>
+            ↓ STEMS
+          </button>
         )}
 
         {/* Export */}

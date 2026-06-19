@@ -42,8 +42,8 @@ export class TrackBus {
     this.panner.connect(this.analyser);
     this.analyser.connect(masterInput);
 
-    // Insert effect slots (null = bypassed)
-    this._inserts = [null, null, null, null];
+    // Insert effect slots (null = bypassed) — 8 slots: REV DLY DIST CHO PHA FLG BIT TAPE
+    this._inserts = Array(8).fill(null);
     this._rebuildChain();
 
     // Sources connect to this entry point

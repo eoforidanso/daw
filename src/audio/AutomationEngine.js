@@ -19,6 +19,19 @@ export const AUTO_PARAMS = {
   'fx:2:mix':    { label: 'DIST MIX',     min: 0,   max: 100, color: '#ff6b35', group: 'FX'  },
   'fx:3:mix':    { label: 'CHORUS MIX',   min: 0,   max: 100, color: '#c47fff', group: 'FX'  },
   'fx:3:rate':   { label: 'CHORUS RATE',  min: 0,   max: 100, color: '#c47fff', group: 'FX'  },
+  'fx:4:mix':    { label: 'PHASER MIX',   min: 0,   max: 100, color: '#7bffcc', group: 'FX'  },
+  'fx:4:rate':   { label: 'PHASER RATE',  min: 0,   max: 100, color: '#7bffcc', group: 'FX'  },
+  'fx:4:depth':  { label: 'PHASER DEPTH', min: 0,   max: 100, color: '#7bffcc', group: 'FX'  },
+  'fx:5:mix':    { label: 'FLANGER MIX',  min: 0,   max: 100, color: '#ffdb4d', group: 'FX'  },
+  'fx:5:rate':   { label: 'FLANGER RATE', min: 0,   max: 100, color: '#ffdb4d', group: 'FX'  },
+  'fx:5:depth':  { label: 'FLANGER DEP',  min: 0,   max: 100, color: '#ffdb4d', group: 'FX'  },
+  'fx:6:bits':   { label: 'CRUSH BITS',   min: 0,   max: 100, color: '#ff4d4d', group: 'FX'  },
+  'fx:6:mix':    { label: 'CRUSH MIX',    min: 0,   max: 100, color: '#ff4d4d', group: 'FX'  },
+  'fx:7:drive':  { label: 'TAPE DRIVE',   min: 0,   max: 100, color: '#c8a06e', group: 'FX'  },
+  'fx:7:warmth': { label: 'TAPE WARMTH',  min: 0,   max: 100, color: '#c8a06e', group: 'FX'  },
+  'fx:7:mix':    { label: 'TAPE MIX',     min: 0,   max: 100, color: '#c8a06e', group: 'FX'  },
+  // ── Global params ─────────────────────────────────────────────────
+  morph:         { label: 'MORPH %',     min: 0,   max: 100, color: '#ff6bcc', group: 'GLOBAL' },
 };
 
 // Linear interpolation between sorted breakpoints
@@ -37,10 +50,17 @@ export function interpolate(points, beat) {
   return null;
 }
 
-// Call from scheduler on every tick to push automation to bus parameters
+// Call from scheduler on every tick to push automation to bus parameters.
+// Returns an `extras` object for global params (e.g. { morph: 45 }).
 export function applyAutomation(lanes, beat, engine) {
   const byTrack = {};
+  const extras  = {};
   for (const lane of lanes) {
+    if (lane.param === 'morph') {
+      const val = interpolate(lane.points, beat);
+      if (val !== null) extras.morph = val;
+      continue;
+    }
     if (!byTrack[lane.trackId]) byTrack[lane.trackId] = [];
     byTrack[lane.trackId].push(lane);
   }
@@ -58,9 +78,12 @@ export function applyAutomation(lanes, beat, engine) {
         if (effect) {
           // Scale 0–100 range to each parameter's native range
           let scaled = val / 100;
-          if (key === 'time')     scaled = val / 100 * 2;       // 0–2 s
-          if (key === 'feedback') scaled = val / 100 * 0.95;    // 0–0.95
-          if (key === 'rate')     scaled = val / 100 * 10;      // 0–10 Hz
+          if (key === 'time')     scaled = val / 100 * 2;        // 0–2 s
+          if (key === 'feedback') scaled = val / 100 * 0.95;     // 0–0.95
+          if (key === 'rate')     scaled = val / 100 * 10;       // 0–10 Hz
+          if (key === 'depth')    scaled = val / 100;            // 0–1
+          if (key === 'bits')     scaled = 1 + val / 100 * 15;  // 1–16 bits
+          if (key === 'warmth')   scaled = val / 100;            // 0–1
           effect.update(key, scaled);
         }
         continue;
@@ -74,4 +97,5 @@ export function applyAutomation(lanes, beat, engine) {
       }
     }
   }
+  return extras;
 }

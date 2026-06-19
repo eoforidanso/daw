@@ -23,21 +23,44 @@ class AudioEngine {
     this.masterGain = this._ctx.createGain();
     this.masterGain.gain.value = 0.85;
 
+    // User-controllable master compressor
+    this.masterCompressor = this._ctx.createDynamicsCompressor();
+    this.masterCompressor.threshold.value = -18;
+    this.masterCompressor.knee.value = 8;
+    this.masterCompressor.ratio.value = 4;
+    this.masterCompressor.attack.value = 0.01;
+    this.masterCompressor.release.value = 0.25;
+
     // Brick-wall limiter on master
     this.masterLimiter = this._ctx.createDynamicsCompressor();
-    this.masterLimiter.threshold.value = -3;
-    this.masterLimiter.knee.value = 2;
+    this.masterLimiter.threshold.value = -1;
+    this.masterLimiter.knee.value = 0;
     this.masterLimiter.ratio.value = 20;
     this.masterLimiter.attack.value = 0.001;
-    this.masterLimiter.release.value = 0.1;
+    this.masterLimiter.release.value = 0.05;
 
     this.masterAnalyser = this._ctx.createAnalyser();
-    this.masterAnalyser.fftSize = 1024;
-    this.masterAnalyser.smoothingTimeConstant = 0.75;
+    this.masterAnalyser.fftSize = 2048;
+    this.masterAnalyser.smoothingTimeConstant = 0.8;
 
-    this.masterGain.connect(this.masterLimiter);
+    // chain: masterGain → masterCompressor → masterLimiter → masterAnalyser → destination
+    this.masterGain.connect(this.masterCompressor);
+    this.masterCompressor.connect(this.masterLimiter);
     this.masterLimiter.connect(this.masterAnalyser);
     this.masterAnalyser.connect(this._ctx.destination);
+
+    // ── Send/return buses ──────────────────────────────────────────
+    // Tracks can send to FX A or FX B; returns go into masterGain
+    this.sendReturnA = this._ctx.createGain(); // e.g. reverb send
+    this.sendReturnB = this._ctx.createGain(); // e.g. delay send
+    this.sendReturnA.gain.value = 1;
+    this.sendReturnB.gain.value = 1;
+    this.sendReturnA.connect(this.masterGain);
+    this.sendReturnB.connect(this.masterGain);
+
+    // ── LUFS estimation (moving RMS over 400ms window) ────────────
+    this._lufsBuffer = [];
+    this._lufsMs = 400;
   }
 
   resume() {
@@ -48,6 +71,32 @@ class AudioEngine {
 
   setMasterVolume(v) {
     if (this.masterGain) this.masterGain.gain.value = v / 100;
+  }
+
+  setMasterComp({ threshold, ratio, attack, release, knee } = {}) {
+    const c = this.masterCompressor;
+    if (!c) return;
+    if (threshold !== undefined) c.threshold.value = threshold;
+    if (ratio     !== undefined) c.ratio.value     = ratio;
+    if (attack    !== undefined) c.attack.value    = attack;
+    if (release   !== undefined) c.release.value   = release;
+    if (knee      !== undefined) c.knee.value      = knee;
+  }
+
+  getMasterCompReduction() {
+    return this.masterCompressor?.reduction ?? 0;
+  }
+
+  // Integrated LUFS approximation (momentary RMS → LUFS-M ≈ -0.691 + 10*log10(RMS²))
+  getLUFS() {
+    if (!this.masterAnalyser) return -70;
+    const buf = new Float32Array(this.masterAnalyser.fftSize);
+    this.masterAnalyser.getFloatTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+    const rms = Math.sqrt(sum / buf.length);
+    if (rms < 1e-9) return -70;
+    return Math.max(-70, -0.691 + 10 * Math.log10(rms * rms));
   }
 
   // ── Track buses ─────────────────────────────────────────────────

@@ -1,6 +1,22 @@
 import { useState, useEffect } from 'react';
 import { DRUM_PATTERNS } from '../audio/DrumPatterns.js';
 
+// ── Euclidean rhythm generator ────────────────────────────────────
+// Evenly distributes `hits` over `steps` using Bresenham algorithm.
+function euclidean(hits, steps, rotation = 0) {
+  if (!hits || !steps) return Array(steps || 16).fill(false);
+  hits = Math.min(hits, steps);
+  const p = Array.from({ length: steps }, (_, i) =>
+    Math.floor(((i + 1) * hits) / steps) !== Math.floor((i * hits) / steps)
+  );
+  // rotate left by `rotation`
+  const r = ((rotation % steps) + steps) % steps;
+  return [...p.slice(r), ...p.slice(0, r)];
+}
+
+// ── Groove presets (for StepSequencer display) ────────────────────
+const GROOVE_NAMES = { straight:'STRAIGHT', swing50:'SWING 50', swing66:'SWING 66', mpc70:'MPC 70', drunk:'DRUNK', shuffle75:'SHUFFLE' };
+
 // ── Pattern library tile ──────────────────────────────────────────
 const ROW_ORDER  = ['KICK', 'SNARE', 'HI-HAT', 'CLAP'];
 const ROW_COLORS = { KICK: '#ff6b35', SNARE: '#4a9eff', 'HI-HAT': '#00d4b4', CLAP: '#ff4466' };
@@ -112,12 +128,20 @@ export default function StepSequencer({
   stepProbs, onProbsChange,
   stepVels,  onVelsChange,
   swing, onSwingChange,
+  trackSwings, onTrackSwingChange,
   onMorphChange,
+  grooveTemplate, onGrooveChange,
   currentBeat, isPlaying,
 }) {
-  const [showLibrary, setShowLibrary] = useState(false);
-  const [showProb,    setShowProb]    = useState(false);
-  const [showVel,     setShowVel]     = useState(false);
+  const [showLibrary,    setShowLibrary]    = useState(false);
+  const [showProb,       setShowProb]       = useState(false);
+  const [showVel,        setShowVel]        = useState(false);
+  const [showTrackSwing, setShowTrackSwing] = useState(false);
+  const [showEuclid,     setShowEuclid]     = useState(false);
+  const [showGroove,     setShowGroove]     = useState(false);
+  // Euclidean settings per row
+  const [euclidHits,     setEuclidHits]     = useState({ KICK:4, SNARE:2, 'HI-HAT':8, CLAP:1 });
+  const [euclidRot,      setEuclidRot]      = useState({ KICK:0, SNARE:0, 'HI-HAT':0, CLAP:0 });
 
   // ── Pattern A/B/C/D slots ─────────────────────────────────────
   const [activeSlot,     setActiveSlot]     = useState(0);
@@ -262,6 +286,22 @@ export default function StepSequencer({
                 <input type="range" min="0" max="100" defaultValue={track.volume} className="step-seq-track-vol"
                   style={{ background: `linear-gradient(to right, ${track.color}88 ${track.volume}%, var(--bg-section) ${track.volume}%)` }}
                 />
+                {showTrackSwing && (() => {
+                  const name = track.name.toUpperCase();
+                  const sw   = trackSwings?.[name] !== undefined ? trackSwings[name] : (swing ?? 0);
+                  const isOverride = trackSwings?.[name] !== undefined;
+                  return (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginTop: 1 }}>
+                      <input type="range" min="0" max="100" value={sw}
+                        onChange={e => onTrackSwingChange?.(name, +e.target.value)}
+                        onDoubleClick={() => onTrackSwingChange?.(name, undefined)}
+                        title={`${name} swing — double-click to reset`}
+                        style={{ WebkitAppearance: 'none', appearance: 'none', width: 48, height: 2, outline: 'none', cursor: 'pointer', accentColor: '#ff6bcc', background: `linear-gradient(to right, #ff6bcc ${sw}%, var(--bg-void) ${sw}%)` }}
+                      />
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 5, color: isOverride ? '#ff6bcc' : 'var(--text-muted)', minWidth: 14 }}>{sw}%</span>
+                    </div>
+                  );
+                })()}
               </div>
               <div className="step-seq-steps">
                 {[0,4,8,12].map((groupStart, gi) => (
@@ -320,6 +360,13 @@ export default function StepSequencer({
         ))}
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: swing > 0 ? 'var(--accent-orange)' : 'var(--text-muted)', marginLeft: 8 }}>SWING {swing > 0 ? `${swing}%` : ''}</span>
         <input type="range" min="0" max="100" value={swing ?? 0} onChange={e => onSwingChange?.(+e.target.value)} style={{ WebkitAppearance: 'none', width: 80, height: 3, background: 'var(--bg-section)', outline: 'none', borderRadius: 2, cursor: 'pointer' }} />
+        <button onClick={() => setShowTrackSwing(v => !v)} title="Per-track swing — double-click a row slider to reset" style={{ height: 20, padding: '0 6px', borderRadius: 3, border: `1px solid ${showTrackSwing ? '#ff6bcc' : 'var(--border-subtle)'}`, background: showTrackSwing ? 'rgba(255,107,204,0.15)' : 'var(--bg-element)', color: showTrackSwing ? '#ff6bcc' : 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 8, cursor: 'pointer' }}>PER</button>
+
+        {/* Groove template */}
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: grooveTemplate && grooveTemplate !== 'straight' ? 'var(--accent-orange)' : 'var(--text-muted)', marginLeft: 8 }}>GROOVE</span>
+        <button onClick={() => setShowGroove(v => !v)} style={{ height: 20, padding: '0 6px', borderRadius: 3, border: `1px solid ${showGroove ? 'var(--accent-orange)' : 'var(--border-subtle)'}`, background: showGroove ? 'rgba(255,150,50,0.12)' : 'var(--bg-element)', color: showGroove ? 'var(--accent-orange)' : 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 8, cursor: 'pointer' }}>
+          {GROOVE_NAMES[grooveTemplate] ?? 'STRAIGHT'}
+        </button>
 
         {/* ── Pattern morph ── */}
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: morphTargetSlot !== null ? '#ff6bcc' : 'var(--text-muted)', marginLeft: 8 }}>MORPH</span>
@@ -352,6 +399,7 @@ export default function StepSequencer({
               <button onClick={applyAccent} style={{ height: 20, padding: '0 7px', borderRadius: 3, border: '1px solid #ffcc00', background: 'rgba(255,204,0,0.12)', color: '#ffcc00', fontFamily: 'var(--font-mono)', fontSize: 8, cursor: 'pointer' }}>ACCENT</button>
             </>
           )}
+          <button onClick={() => setShowEuclid(v => !v)} style={{ height: 20, padding: '0 8px', borderRadius: 3, border: `1px solid ${showEuclid ? '#7bffcc' : 'var(--border-subtle)'}`, background: showEuclid ? 'rgba(123,255,204,0.12)' : 'var(--bg-element)', color: showEuclid ? '#7bffcc' : 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 8, cursor: 'pointer' }}>EUCLID</button>
           <button onClick={randomize} style={{ height: 20, padding: '0 8px', borderRadius: 3, border: '1px solid var(--accent-purple)', background: 'var(--bg-element)', color: 'var(--accent-purple)', fontFamily: 'var(--font-mono)', fontSize: 8, cursor: 'pointer' }}>RND</button>
           <button onClick={clearPattern} style={{ height: 20, padding: '0 8px', borderRadius: 3, border: '1px solid var(--border-subtle)', background: 'var(--bg-element)', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 8, cursor: 'pointer' }}>CLR</button>
           <button onClick={() => setShowProb(v => !v)} style={{ height: 20, padding: '0 8px', borderRadius: 3, border: `1px solid ${showProb ? 'var(--accent-orange)' : 'var(--border-subtle)'}`, background: showProb ? 'rgba(255,150,50,0.15)' : 'var(--bg-element)', color: showProb ? 'var(--accent-orange)' : 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 8, cursor: 'pointer' }}>PROB</button>
@@ -366,6 +414,64 @@ export default function StepSequencer({
           <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 6 }}>
             {DRUM_PATTERNS.map((pattern, i) => (
               <PatternTile key={i} pattern={pattern} onLoad={() => loadPattern(pattern)} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Euclidean rhythm generator */}
+      {showEuclid && (
+        <div style={{ marginTop: 8, borderTop: '1px solid var(--border-subtle)', paddingTop: 8 }}>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#7bffcc', letterSpacing: '0.15em', marginBottom: 6 }}>EUCLIDEAN RHYTHM — E(hits,16)</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {ROW_ORDER.map(name => {
+              const hits = euclidHits[name] ?? 4;
+              const rot  = euclidRot[name]  ?? 0;
+              const preview = euclidean(hits, 16, rot);
+              return (
+                <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 7, color: ROW_COLORS[name], width: 52, flexShrink: 0 }}>{name}</span>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 7, color: 'var(--text-muted)', width: 28 }}>E({hits})</span>
+                  <input type="range" min="0" max="16" value={hits}
+                    onChange={e => setEuclidHits(p => ({ ...p, [name]: +e.target.value }))}
+                    style={{ width: 80, accentColor: ROW_COLORS[name] }} />
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 7, color: 'var(--text-muted)', width: 22 }}>R{rot}</span>
+                  <input type="range" min="0" max="15" value={rot}
+                    onChange={e => setEuclidRot(p => ({ ...p, [name]: +e.target.value }))}
+                    style={{ width: 60, accentColor: '#7bffcc' }} />
+                  {/* Mini preview */}
+                  <div style={{ display: 'flex', gap: 1 }}>
+                    {preview.map((on, i) => (
+                      <div key={i} style={{ width: 6, height: 6, borderRadius: 1, background: on ? ROW_COLORS[name] : 'var(--bg-section)' }} />
+                    ))}
+                  </div>
+                  <button onClick={() => onStepsChange(prev => ({ ...prev, [name]: euclidean(hits, 16, rot) }))}
+                    style={{ height: 16, padding: '0 6px', borderRadius: 2, border: `1px solid ${ROW_COLORS[name]}`, background: 'transparent', color: ROW_COLORS[name], fontFamily: 'var(--font-mono)', fontSize: 7, cursor: 'pointer' }}>
+                    APPLY
+                  </button>
+                </div>
+              );
+            })}
+            <button onClick={() => {
+              const newSteps = Object.fromEntries(ROW_ORDER.map(n => [n, euclidean(euclidHits[n] ?? 4, 16, euclidRot[n] ?? 0)]));
+              onStepsChange(newSteps);
+            }} style={{ alignSelf: 'flex-start', height: 20, padding: '0 12px', borderRadius: 3, border: '1px solid #7bffcc', background: 'rgba(123,255,204,0.12)', color: '#7bffcc', fontFamily: 'var(--font-mono)', fontSize: 8, cursor: 'pointer' }}>APPLY ALL</button>
+          </div>
+        </div>
+      )}
+
+      {/* Groove template picker */}
+      {showGroove && (
+        <div style={{ marginTop: 8, borderTop: '1px solid var(--border-subtle)', paddingTop: 8 }}>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'var(--accent-orange)', letterSpacing: '0.15em', marginBottom: 6 }}>GROOVE TEMPLATE</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {Object.entries(GROOVE_NAMES).map(([id, label]) => (
+              <button key={id} onClick={() => { onGrooveChange?.(id); setShowGroove(false); }}
+                style={{ height: 22, padding: '0 10px', borderRadius: 3, cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 8,
+                  border: `1px solid ${grooveTemplate === id ? 'var(--accent-orange)' : 'var(--border-subtle)'}`,
+                  background: grooveTemplate === id ? 'rgba(255,150,50,0.15)' : 'var(--bg-element)',
+                  color: grooveTemplate === id ? 'var(--accent-orange)' : 'var(--text-muted)',
+                }}>{label}</button>
             ))}
           </div>
         </div>

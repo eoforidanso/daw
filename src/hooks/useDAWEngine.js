@@ -1,9 +1,10 @@
 import { useReducer, useRef, useCallback, useState, useEffect } from 'react';
 import { engine }                       from '../audio/engine.js';
-import { createReverb, createDelay, createDistortion, createChorus } from '../audio/effects.js';
+import { createReverb, createDelay, createDistortion, createChorus,
+         createPhaser, createFlanger, createBitcrusher, createTapeSaturation } from '../audio/effects.js';
 import { Recorder }                     from '../audio/Recorder.js';
 import { midiEngine }                   from '../audio/MIDIEngine.js';
-import { applyAutomation }              from '../audio/AutomationEngine.js';
+import { applyAutomation, mkPtId }      from '../audio/AutomationEngine.js';
 import { Freezer }                      from '../audio/Freezer.js';
 import { ProjectIO }                    from '../audio/ProjectIO.js';
 import { pluginRegistry }               from '../audio/PluginAPI.js';
@@ -31,8 +32,20 @@ function buildArpSequence(chord, pattern, octaves) {
   }
 }
 
+// Chord semitone intervals above root
+const CHORD_INTERVALS = {
+  maj:  [0, 4, 7],
+  min:  [0, 3, 7],
+  dom7: [0, 4, 7, 10],
+  maj7: [0, 4, 7, 11],
+  min7: [0, 3, 7, 10],
+  sus4: [0, 5, 7],
+  dim:  [0, 3, 6],
+  aug:  [0, 4, 8],
+};
+
 // ── Real-time synth voice for MIDI clip playback ──────────────────
-function scheduleClipNote(ctx, pitch, time, durSec, trackId, params) {
+function scheduleClipNote(ctx, pitch, time, durSec, trackId, params, chordIntervals = null) {
   const freq = 440 * Math.pow(2, (pitch - 69) / 12);
   if (freq > ctx.sampleRate / 2 - 100 || freq < 20) return;
   const bus  = engine.getBus(trackId);
@@ -58,6 +71,24 @@ function scheduleClipNote(ctx, pitch, time, durSec, trackId, params) {
   amp.gain.linearRampToValueAtTime(0, time + durSec + rel);
   osc.connect(flt); flt.connect(amp); amp.connect(dest);
   osc.start(time); osc.stop(time + durSec + rel + 0.05);
+  // Chord mode: schedule additional voices for chord tones above root
+  if (chordIntervals && chordIntervals.length > 1) {
+    for (const semis of chordIntervals.slice(1)) {
+      const chordFreq = 440 * Math.pow(2, (pitch + semis - 69) / 12);
+      if (chordFreq >= ctx.sampleRate / 2 - 100) continue;
+      const co = ctx.createOscillator();
+      co.type = ['sawtooth','sine','square','triangle'].includes(osc1Type) ? osc1Type : 'sawtooth';
+      co.frequency.value = chordFreq;
+      const ca = ctx.createGain();
+      ca.gain.setValueAtTime(0, time);
+      ca.gain.linearRampToValueAtTime(sus * 0.6, time + atk);
+      ca.gain.linearRampToValueAtTime(sus * 0.4, time + atk + dec);
+      ca.gain.setValueAtTime(sus * 0.4, time + durSec);
+      ca.gain.linearRampToValueAtTime(0, time + durSec + rel);
+      co.connect(ca); ca.connect(dest);
+      co.start(time); co.stop(time + durSec + rel + 0.05);
+    }
+  }
 }
 
 // ── ID helpers ────────────────────────────────────────────────────
@@ -212,7 +243,12 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
   const [stepProbs, setStepProbs]            = useState(DEFAULT_PROBS);
   const [stepVels,  setStepVels]             = useState(DEFAULT_VELS);
   const [swing, setSwing] = useState(0);
+  const [trackSwings, setTrackSwings] = useState({});  // per-drum override; {} = all follow global
   const [morphData, setMorphData] = useState({ amount: 0, targetSteps: null, targetVels: null });
+  const [autoRecording, setAutoRecording] = useState(false);
+  const [grooveTemplate, setGrooveTemplate] = useState('straight');
+  const [chordMode, setChordMode] = useState({ enabled: false, type: 'maj' });
+  const [sidechainMap, setSidechainMap] = useState({}); // targetTrackId → sourceTrackId
   // Arpeggiator
   const [arpEnabled,  setArpEnabled]  = useState(false);
   const [arpChord,    setArpChord]    = useState([]);
@@ -262,7 +298,12 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
   const probsRef        = useRef(DEFAULT_PROBS);
   const velsRef         = useRef(DEFAULT_VELS);
   const swingRef        = useRef(0);
+  const trackSwingsRef  = useRef({});
   const morphDataRef    = useRef({ amount: 0, targetSteps: null, targetVels: null });
+  const morphAutoAmtRef   = useRef(null);
+  const autoRecordingRef  = useRef(false);
+  const grooveRef         = useRef('straight');
+  const chordModeRef      = useRef({ enabled: false, type: 'maj' });
   const trackInsertsRef = useRef(new Map());   // key: `${trackId}:${slot}` → effect instance
   const arpEnabledRef   = useRef(false);
   const arpRateRef      = useRef('1/8');
@@ -275,7 +316,11 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
   probsRef.current       = stepProbs;
   velsRef.current        = stepVels;
   swingRef.current       = swing;
+  trackSwingsRef.current = trackSwings;
   morphDataRef.current   = morphData;
+  autoRecordingRef.current  = autoRecording;
+  grooveRef.current         = grooveTemplate;
+  chordModeRef.current      = chordMode;
   const recorderRef  = useRef(new Recorder());
   const recStartRef  = useRef(0);
   const inputStreamRef   = useRef(null);
@@ -326,16 +371,24 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
     while (nextTimeRef.current < ctx.currentTime + 0.12) {
       const idx  = stepRef.current;
       const when = Math.max(ctx.currentTime, nextTimeRef.current - comp);
-      // Swing: push odd-numbered 16th steps (the "ands") forward in time
-      const swingOffset = (idx % 2 === 1) ? (swingRef.current / 100) * secsPerStep * 0.5 : 0;
-      const swungWhen   = Math.max(ctx.currentTime, when + swingOffset);
       const steps = stepsRef.current;
       const tr    = tracksRef.current;
       const muted = (name) => tr.find(x => x.name === name)?.mute ?? false;
-      const { amount: morphAmt, targetSteps: mts, targetVels: mtv } = morphDataRef.current;
+      // Morph: use automation override if present, else React state
+      const { amount: morphAmtBase, targetSteps: mts, targetVels: mtv } = morphDataRef.current;
+      const morphAmt = morphAutoAmtRef.current ?? morphAmtBase;
       const pairs = [['KICK',1],['SNARE',2],['HI-HAT',3],['CLAP',4]];
       pairs.forEach(([name, tid]) => {
         if (muted(name)) return;
+        // Per-track swing: use individual override if set, else global swing
+        const sw = trackSwingsRef.current[name] !== undefined
+          ? trackSwingsRef.current[name]
+          : swingRef.current;
+        const swingOff = idx % 2 === 1 ? (sw / 100) * secsPerStep * 0.5 : 0;
+        // Groove template adds an additional per-step timing offset
+        const groovePct = (GROOVES[grooveRef.current] ?? GROOVES.straight)[idx] ?? 0;
+        const grooveOff = (groovePct / 100) * secsPerStep;
+        const swungWhen = Math.max(ctx.currentTime, when + swingOff + grooveOff);
         const onA = steps[name]?.[idx] ?? false;
         const onB = morphAmt > 0 && mts ? (mts[name]?.[idx] ?? false) : false;
         let effectiveOn   = onA;
@@ -352,9 +405,10 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
         const vel  = morphAmt === 0 ? velA : Math.round(velA + (velB - velA) * morphAmt / 100);
         synthDrum(ctx, engine.masterGain, name, swungWhen, engine.getBus(tid), vel);
       });
-      // Apply automation at this beat
+      // Apply automation; capture global extras (morph)
       const beat = idx;
-      applyAutomation(autoRef.current, beat, engine);
+      const autoExtras = applyAutomation(autoRef.current, beat, engine);
+      morphAutoAmtRef.current = autoExtras.morph ?? null;
 
       // ── MIDI clip note scheduling ──────────────────────────────
       const LOOP_BEATS   = 32;
@@ -376,7 +430,9 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
                 schedNotesRef.current.add(key);
                 const startT  = Math.max(ctx.currentTime, engine.beatToTime(absBeat));
                 const durSec  = Math.max(0.05, (note.durationBeats ?? 0.5) * spb);
-                scheduleClipNote(ctx, note.pitch, startT, durSec, clip.trackId, synthParamsRef.current);
+                const cm = chordModeRef.current;
+                const intervals = cm.enabled ? (CHORD_INTERVALS[cm.type] ?? null) : null;
+                scheduleClipNote(ctx, note.pitch, startT, durSec, clip.trackId, synthParamsRef.current, intervals);
               }
             }
           }
@@ -700,16 +756,57 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
     if (project.name) setProjectName(project.name);
   }, []);
 
+  // ── Per-track swing ───────────────────────────────────────────────
+  const updateTrackSwing = useCallback((name, val) => {
+    setTrackSwings(prev => {
+      if (val === undefined || val === null) {
+        const next = { ...prev };
+        delete next[name];
+        return next;
+      }
+      return { ...prev, [name]: val };
+    });
+  }, []);
+
+  // ── Automation recording ──────────────────────────────────────────
+  const recordAutomation = useCallback((trackId, param, value) => {
+    if (!isPlayingRef.current || !autoRecordingRef.current) return;
+    const beat = Math.round((engine.getCurrentBeat() % 32) * 8) / 8; // 1/8-beat grid
+    const lane = autoRef.current.find(l => l.trackId === trackId && l.param === param);
+    const pt = { id: mkPtId(), beat, value };
+    if (lane) {
+      dispatchAuto({ type: 'ADD_POINT', laneId: lane.id, point: pt });
+    } else {
+      dispatchAuto({ type: 'ADD_LANE', lane: { id: luid(), trackId, param, points: [pt] } });
+    }
+  }, []);
+
   // ── Mixer helpers ────────────────────────────────────────────────
   const setTrackEQ    = useCallback((trackId, band, db) => engine.getBus(trackId)?.setEQ(band, db), []);
   const getTrackLevel = useCallback((trackId) => engine.getBus(trackId)?.getLevel() ?? 0, []);
   const getMasterLevel= useCallback(() => engine.getMasterLevel(), []);
+
+  // ── Groove templates ──────────────────────────────────────────────
+  // Each entry is 16 step offsets (in % of a 16th-note, added to timing).
+  // Negative = early, positive = late. Applied multiplicatively with secsPerStep.
+  const GROOVES = {
+    straight:  Array(16).fill(0),
+    swing50:   [0,12,0,12, 0,12,0,12, 0,12,0,12, 0,12,0,12],
+    swing66:   [0,22,0,22, 0,22,0,22, 0,22,0,22, 0,22,0,22],
+    mpc70:     [0,18, 0,16, 0,18, 0,16, 0,18, 0,16, 0,18, 0,16],
+    drunk:     [0,-4, 6,-2, 0,8, -6,2, 0,-4, 6,-2, 0,8, -6,2],
+    shuffle75: [0,20,0,20, 0,20,0,20, 0,20,0,20, 0,20,0,20],
+  };
 
   const FX_FACTORIES = {
     REV:  (ctx) => createReverb(ctx),
     DLY:  (ctx) => createDelay(ctx),
     DIST: (ctx) => createDistortion(ctx, { drive: 0.5 }),
     CHO:  (ctx) => createChorus(ctx),
+    PHA:  (ctx) => createPhaser(ctx),
+    FLG:  (ctx) => createFlanger(ctx),
+    BIT:  (ctx) => createBitcrusher(ctx),
+    TAPE: (ctx) => createTapeSaturation(ctx),
   };
 
   const setTrackInsert = useCallback((trackId, slot, effectType) => {
@@ -822,7 +919,16 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
     stepProbs, setStepProbs,
     stepVels,  setStepVels,
     swing, setSwing,
+    trackSwings, updateTrackSwing,
     morphData, setMorphData,
+    autoRecording, setAutoRecording,
+    recordAutomation,
+    grooveTemplate, setGrooveTemplate,
+    chordMode, setChordMode,
+    sidechainMap, setSidechainMap,
+    getLUFS: () => engine.getLUFS?.() ?? -70,
+    getMasterCompReduction: () => engine.getMasterCompReduction?.() ?? 0,
+    setMasterComp: (p) => engine.setMasterComp?.(p),
     // Arp
     arpEnabled, setArpEnabled,
     arpChord,   setArpChord,

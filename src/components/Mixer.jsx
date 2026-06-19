@@ -57,12 +57,13 @@ function EQCurve({ low, mid, high, color }) {
 }
 
 // ── EQ section per channel ────────────────────────────────────────
-function EQSection({ trackId, color, onEQChange }) {
+function EQSection({ trackId, color, onEQChange, onRecordParam }) {
   const [eq, setEQ] = useState({ low: 0, mid: 0, high: 0 });
   const update = (band, val) => {
     const next = { ...eq, [band]: val };
     setEQ(next);
     onEQChange(trackId, band, val);
+    onRecordParam?.(trackId, `eq${band.charAt(0).toUpperCase() + band.slice(1)}`, val);
   };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'center' }}>
@@ -101,10 +102,14 @@ function InsertSlot({ name, color, active, onToggle }) {
 }
 
 // ── Channel strip ─────────────────────────────────────────────────
-const FX_ORDER = ['REV', 'DLY', 'DIST', 'CHO'];
+const FX_ORDER = ['REV', 'DLY', 'DIST', 'CHO', 'PHA', 'FLG', 'BIT', 'TAPE'];
+const FX_COLORS = {
+  REV:'var(--accent-blue)', DLY:'var(--accent-cyan)', DIST:'var(--accent-orange)', CHO:'var(--accent-purple)',
+  PHA:'#7bffcc', FLG:'#ffdb4d', BIT:'#ff4d4d', TAPE:'#c8a06e',
+};
 
-function ChannelStrip({ track, onUpdate, getLevel, isPlaying, onEQChange, isMaster, onExportMidi, onInsertToggle }) {
-  const [effects, setEffects] = useState({ REV: false, DLY: false, DIST: false, CHO: false });
+function ChannelStrip({ track, onUpdate, getLevel, isPlaying, onEQChange, isMaster, onExportMidi, onInsertToggle, onRecordParam, tracks, sidechainSource, onSidechainChange }) {
+  const [effects, setEffects] = useState(Object.fromEntries(FX_ORDER.map(k => [k, false])));
   const color = isMaster ? 'var(--accent-cyan)' : track.color;
   const getBound = useCallback(() => getLevel(track.id), [getLevel, track.id]);
 
@@ -136,26 +141,36 @@ function ChannelStrip({ track, onUpdate, getLevel, isPlaying, onEQChange, isMast
 
       {/* EQ */}
       {!isMaster && (
-        <EQSection trackId={track.id} color={color} onEQChange={onEQChange} />
+        <EQSection trackId={track.id} color={color} onEQChange={onEQChange} onRecordParam={onRecordParam} />
       )}
 
       {/* Insert FX slots */}
       {!isMaster && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-          {Object.keys(effects).map(fx => (
-            <InsertSlot key={fx} name={fx}
-              color={fx === 'REV' ? 'var(--accent-blue)' : fx === 'DLY' ? 'var(--accent-cyan)' : fx === 'DIST' ? 'var(--accent-orange)' : 'var(--accent-purple)'}
-              active={effects[fx]}
-              onToggle={() => handleFxToggle(fx)}
-            />
+          {FX_ORDER.map(fx => (
+            <InsertSlot key={fx} name={fx} color={FX_COLORS[fx] ?? 'var(--accent-cyan)'}
+              active={effects[fx]} onToggle={() => handleFxToggle(fx)} />
           ))}
+        </div>
+      )}
+      {/* Sidechain source selector */}
+      {!isMaster && tracks?.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginTop: 2 }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 5, color: 'var(--text-muted)', letterSpacing: '0.1em' }}>SC</span>
+          <select value={sidechainSource ?? ''} onChange={e => onSidechainChange?.(track.id, e.target.value || null)}
+            style={{ flex: 1, fontSize: 6, fontFamily: 'var(--font-mono)', background: 'var(--bg-element)', color: 'var(--text-secondary)', border: '1px solid var(--border-faint)', borderRadius: 2, padding: '1px 2px' }}>
+            <option value="">OFF</option>
+            {tracks.filter(t => t.id !== track.id).map(t => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
         </div>
       )}
 
       {/* Pan */}
       <Knob
         value={track.pan + 50} min={0} max={100}
-        onChange={v => !isMaster && onUpdate(track.id, { pan: v - 50 })}
+        onChange={v => { if (isMaster) return; onUpdate(track.id, { pan: v - 50 }); onRecordParam?.(track.id, 'pan', v - 50); }}
         label="PAN" size={26}
         color={typeof color === 'string' && color.startsWith('var') ? 'var(--accent-cyan)' : color}
         showValue={false}
@@ -166,7 +181,7 @@ function ChannelStrip({ track, onUpdate, getLevel, isPlaying, onEQChange, isMast
         <div className="mixer-fader-wrap">
           <input
             type="range" min="0" max="100" value={track.volume}
-            onChange={e => !isMaster && onUpdate(track.id, { volume: +e.target.value })}
+            onChange={e => { if (isMaster) return; const v = +e.target.value; onUpdate(track.id, { volume: v }); onRecordParam?.(track.id, 'volume', v); }}
             className="mixer-fader"
             style={{
               background: `linear-gradient(to top,
@@ -196,7 +211,62 @@ function ChannelStrip({ track, onUpdate, getLevel, isPlaying, onEQChange, isMast
 
 const MASTER = { id: 0, name: 'MASTER', color: 'var(--accent-cyan)', volume: 80, pan: 0, mute: false, solo: false };
 
-export default function Mixer({ tracks, onTrackUpdate, isPlaying, getTrackLevel, getMasterLevel, setTrackEQ, clips, bpm, onInsertToggle }) {
+// ── Master bus chain controls ─────────────────────────────────────
+function MasterChain({ setMasterComp, getMasterCompReduction, getLUFS, isPlaying }) {
+  const [comp, setComp] = useState({ threshold: -18, ratio: 4, attack: 10, release: 250, knee: 8 });
+  const [lufs, setLufs] = useState(-70);
+  const [gr,   setGr]   = useState(0);
+
+  useEffect(() => {
+    if (!isPlaying) return;
+    const id = setInterval(() => {
+      setLufs(Math.round((getLUFS?.() ?? -70) * 10) / 10);
+      setGr(Math.round((getMasterCompReduction?.() ?? 0) * 10) / 10);
+    }, 100);
+    return () => clearInterval(id);
+  }, [isPlaying, getLUFS, getMasterCompReduction]);
+
+  const update = (key, val) => {
+    const next = { ...comp, [key]: val };
+    setComp(next);
+    setMasterComp?.({ [key]: key === 'attack' ? val / 1000 : key === 'release' ? val / 1000 : val });
+  };
+
+  const knobDefs = [
+    { key: 'threshold', label: 'THR', min: -40, max: 0, color: 'var(--accent-cyan)', unit: 'dB' },
+    { key: 'ratio',     label: 'RATIO', min: 1, max: 20, color: 'var(--accent-purple)', unit: ':1' },
+    { key: 'attack',    label: 'ATK', min: 1, max: 100, color: 'var(--accent-orange)', unit: 'ms' },
+    { key: 'release',   label: 'REL', min: 50, max: 1000, color: 'var(--accent-blue)', unit: 'ms' },
+  ];
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', borderTop: '1px solid var(--border-faint)', background: 'var(--bg-section)' }}>
+      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 7, letterSpacing: '0.18em', color: 'var(--text-muted)' }}>MASTER BUS COMPRESSOR</div>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        {knobDefs.map(({ key, label, min, max, color, unit }) => (
+          <div key={key} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+            <Knob value={comp[key]} min={min} max={max} onChange={v => update(key, v)}
+              label={label} size={24} color={color} showValue={false} />
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 6, color: 'var(--text-muted)' }}>{comp[key]}{unit}</span>
+          </div>
+        ))}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginLeft: 8 }}>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 7, color: gr < -0.5 ? 'var(--accent-cyan)' : 'var(--text-muted)' }}>
+            GR: {gr.toFixed(1)} dB
+          </div>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 7, color: lufs > -9 ? 'var(--accent-orange)' : lufs > -14 ? 'var(--accent-cyan)' : 'var(--text-muted)' }}>
+            LUFS: {lufs.toFixed(1)}
+          </div>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 6, color: 'var(--text-muted)' }}>
+            {lufs > -9 ? 'LOUD' : lufs > -14 ? 'OK' : lufs > -23 ? 'SOFT' : 'QUIET'}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function Mixer({ tracks, onTrackUpdate, isPlaying, getTrackLevel, getMasterLevel, setTrackEQ, clips, bpm, onInsertToggle, onRecordParam, sidechainMap, onSidechainChange, setMasterComp, getMasterCompReduction, getLUFS }) {
   const safeGetLevel = getTrackLevel ?? (() => 0);
   const safeGetMaster = getMasterLevel ?? (() => 0);
   const safeSetEQ = setTrackEQ ?? (() => {});
@@ -224,6 +294,10 @@ export default function Mixer({ tracks, onTrackUpdate, isPlaying, getTrackLevel,
           isMaster={false}
           onExportMidi={handleExportMidi}
           onInsertToggle={onInsertToggle}
+          onRecordParam={onRecordParam}
+          tracks={tracks}
+          sidechainSource={sidechainMap?.[t.id]}
+          onSidechainChange={onSidechainChange}
         />
       ))}
       <div style={{ width: 1, background: 'var(--border-default)', margin: '0 4px', flexShrink: 0 }} />
@@ -236,6 +310,12 @@ export default function Mixer({ tracks, onTrackUpdate, isPlaying, getTrackLevel,
         isMaster
       />
       </div>
+      <MasterChain
+        setMasterComp={setMasterComp}
+        getMasterCompReduction={getMasterCompReduction}
+        getLUFS={getLUFS}
+        isPlaying={isPlaying}
+      />
     </div>
   );
 }

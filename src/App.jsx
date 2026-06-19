@@ -27,9 +27,14 @@ import MelodyGenerator    from './components/MelodyGenerator'
 import QuantizerPanel     from './components/QuantizerPanel'
 import MixAssistantPanel  from './components/MixAssistantPanel'
 import { WarpPanel }      from './components/WarpMarkerEditor'
+import LFODesigner        from './components/LFODesigner'
+import MelodicSequencer   from './components/MelodicSequencer'
+import ModMatrix          from './components/ModMatrix'
+import HighlifePanel      from './components/HighlifePanel'
 import { useDAWEngine }   from './hooks/useDAWEngine'
 import { AutoSave }       from './audio/AutoSave.js'
 import { VersionHistory } from './audio/VersionHistory.js'
+import { StemExport }     from './audio/StemExport.js'
 
 const INITIAL_SYNTH = {
   osc1Type: 'sawtooth', osc1Detune: 0,
@@ -108,6 +113,17 @@ export default function App() {
   const handleTrackUpdate = useCallback((id, updates) => {
     setTracks(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
   }, []);
+
+  const handleStemExport = useCallback(async () => {
+    try {
+      await StemExport.export({
+        bpm, tracks,
+        steps: daw.sequencerSteps,
+        clips: daw.clips,
+        synthParams,
+      }, { numBars: 8 });
+    } catch (e) { console.error('Stem export failed:', e); }
+  }, [bpm, tracks, daw.sequencerSteps, daw.clips, synthParams]);
 
   const handleSynthUpdate = useCallback((key, value) => {
     setSynthParams(prev => ({ ...prev, [key]: value }));
@@ -294,6 +310,9 @@ export default function App() {
         onExportOpen={() => setShowExport(true)}
         lastSaved={lastSaved}
         collabSession={collabSession}
+        autoRecording={daw.autoRecording}
+        onAutoRecordToggle={() => daw.setAutoRecording(v => !v)}
+        onStemExport={handleStemExport}
       />
 
       <div className="daw-workspace">
@@ -380,7 +399,11 @@ export default function App() {
               onVelsChange={daw.setStepVels}
               swing={daw.swing}
               onSwingChange={daw.setSwing}
+              trackSwings={daw.trackSwings}
+              onTrackSwingChange={daw.updateTrackSwing}
               onMorphChange={daw.setMorphData}
+              grooveTemplate={daw.grooveTemplate}
+              onGrooveChange={daw.setGrooveTemplate}
               currentBeat={daw.currentBeat}
               isPlaying={daw.isPlaying}
             />
@@ -390,7 +413,7 @@ export default function App() {
 
       <div className="daw-bottom">
         <div className="bottom-tabs">
-          {[['mixer','MIXER'],['synth','INSTRUMENT'],['effects','EFFECTS'],['plugins','PLUGINS'],['samples','SAMPLES'],['chords','CHORDS'],['arp','ARP'],['seed','SONG SEED'],['melody','AI MELODY'],['quant','QUANTIZE'],['warp','WARP'],['aimix','AI MIX'],['input','INPUT'],['aichat','AI ASSISTANT']].map(([id, label]) => (
+          {[['mixer','MIXER'],['synth','INSTRUMENT'],['effects','EFFECTS'],['plugins','PLUGINS'],['samples','SAMPLES'],['chords','CHORDS'],['arp','ARP'],['seed','SONG SEED'],['highlife','HIGHLIFE'],['melody','AI MELODY'],['melodic','MELODIC SEQ'],['lfo','LFO'],['modmatrix','MOD MATRIX'],['quant','QUANTIZE'],['warp','WARP'],['aimix','AI MIX'],['input','INPUT'],['aichat','AI ASSISTANT']].map(([id, label]) => (
             <button key={id} className={`bottom-tab ${bottomTab === id ? 'active' : ''}`}
               onClick={() => handleBottomTab(id)}>{label}</button>
           ))}
@@ -414,10 +437,34 @@ export default function App() {
               clips={daw.clips}
               bpm={bpm}
               onInsertToggle={daw.setTrackInsert}
+              onRecordParam={daw.recordAutomation}
+              sidechainMap={daw.sidechainMap}
+              onSidechainChange={(targetId, sourceId) => daw.setSidechainMap(prev => ({ ...prev, [targetId]: sourceId }))}
+              setMasterComp={daw.setMasterComp}
+              getMasterCompReduction={daw.getMasterCompReduction}
+              getLUFS={daw.getLUFS}
             />
           )}
           {bottomTab === 'synth' && (
-            <SynthPanel params={synthParams} onUpdate={handleSynthUpdate} />
+            <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+              {/* Chord mode bar */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px', borderBottom: '1px solid var(--border-faint)', flexShrink: 0 }}>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 7, letterSpacing: '0.15em', color: 'var(--text-muted)' }}>CHORD MODE</span>
+                <button onClick={() => daw.setChordMode(c => ({ ...c, enabled: !c.enabled }))}
+                  style={{ height: 18, padding: '0 8px', borderRadius: 2, border: `1px solid ${daw.chordMode.enabled ? 'var(--accent-cyan)' : 'var(--border-default)'}`, background: daw.chordMode.enabled ? 'rgba(0,212,180,0.15)' : 'var(--bg-element)', color: daw.chordMode.enabled ? 'var(--accent-cyan)' : 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 7, cursor: 'pointer' }}>
+                  {daw.chordMode.enabled ? 'ON' : 'OFF'}
+                </button>
+                {daw.chordMode.enabled && ['maj','min','dom7','maj7','min7','sus4','dim','aug'].map(t => (
+                  <button key={t} onClick={() => daw.setChordMode(c => ({ ...c, type: t }))}
+                    style={{ height: 18, padding: '0 6px', borderRadius: 2, border: `1px solid ${daw.chordMode.type === t ? 'var(--accent-purple)' : 'var(--border-faint)'}`, background: daw.chordMode.type === t ? 'rgba(155,114,255,0.15)' : 'transparent', color: daw.chordMode.type === t ? 'var(--accent-purple)' : 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 7, cursor: 'pointer' }}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+              <div style={{ flex: 1, overflow: 'hidden' }}>
+                <SynthPanel params={synthParams} onUpdate={handleSynthUpdate} />
+              </div>
+            </div>
           )}
           {bottomTab === 'effects' && (
             <SynthPanel params={synthParams} onUpdate={handleSynthUpdate} effectsMode />
@@ -460,10 +507,39 @@ export default function App() {
               dispatchClips={daw.dispatchClips}
             />
           )}
+          {bottomTab === 'highlife' && (
+            <HighlifePanel
+              tracks={tracks}
+              arpChord={daw.arpChord}
+              onStepsChange={daw.setSequencerSteps}
+              dispatchClips={daw.dispatchClips}
+            />
+          )}
           {bottomTab === 'melody' && (
             <MelodyGenerator
               tracks={tracks}
               onInsert={daw.insertMelody}
+            />
+          )}
+          {bottomTab === 'melodic' && (
+            <MelodicSequencer
+              tracks={tracks}
+              clips={daw.clips}
+              onUpdateClip={daw.updateClip}
+            />
+          )}
+          {bottomTab === 'lfo' && (
+            <LFODesigner
+              tracks={tracks}
+              autoLanes={daw.autoLanes}
+              onAddAutoLane={daw.addAutoLane}
+              onAddAutoPoint={daw.addAutoPoint}
+            />
+          )}
+          {bottomTab === 'modmatrix' && (
+            <ModMatrix
+              tracks={tracks}
+              onModSlotsChange={() => {}}
             />
           )}
           {bottomTab === 'quant' && (
