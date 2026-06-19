@@ -101,10 +101,19 @@ function InsertSlot({ name, color, active, onToggle }) {
 }
 
 // ── Channel strip ─────────────────────────────────────────────────
-function ChannelStrip({ track, onUpdate, getLevel, isPlaying, onEQChange, isMaster, onExportMidi }) {
+const FX_ORDER = ['REV', 'DLY', 'DIST', 'CHO'];
+
+function ChannelStrip({ track, onUpdate, getLevel, isPlaying, onEQChange, isMaster, onExportMidi, onInsertToggle }) {
   const [effects, setEffects] = useState({ REV: false, DLY: false, DIST: false, CHO: false });
   const color = isMaster ? 'var(--accent-cyan)' : track.color;
   const getBound = useCallback(() => getLevel(track.id), [getLevel, track.id]);
+
+  const handleFxToggle = useCallback((fx) => {
+    if (isMaster) return;
+    const next = !effects[fx];
+    setEffects(e => ({ ...e, [fx]: next }));
+    onInsertToggle?.(track.id, FX_ORDER.indexOf(fx), next ? fx : null);
+  }, [effects, isMaster, track.id, onInsertToggle]);
 
   return (
     <div className={`mixer-channel ${isMaster ? 'master' : ''}`}
@@ -137,7 +146,7 @@ function ChannelStrip({ track, onUpdate, getLevel, isPlaying, onEQChange, isMast
             <InsertSlot key={fx} name={fx}
               color={fx === 'REV' ? 'var(--accent-blue)' : fx === 'DLY' ? 'var(--accent-cyan)' : fx === 'DIST' ? 'var(--accent-orange)' : 'var(--accent-purple)'}
               active={effects[fx]}
-              onToggle={() => setEffects(e => ({ ...e, [fx]: !e[fx] }))}
+              onToggle={() => handleFxToggle(fx)}
             />
           ))}
         </div>
@@ -187,7 +196,7 @@ function ChannelStrip({ track, onUpdate, getLevel, isPlaying, onEQChange, isMast
 
 const MASTER = { id: 0, name: 'MASTER', color: 'var(--accent-cyan)', volume: 80, pan: 0, mute: false, solo: false };
 
-export default function Mixer({ tracks, onTrackUpdate, isPlaying, getTrackLevel, getMasterLevel, setTrackEQ, clips, bpm }) {
+export default function Mixer({ tracks, onTrackUpdate, isPlaying, getTrackLevel, getMasterLevel, setTrackEQ, clips, bpm, onInsertToggle }) {
   const safeGetLevel = getTrackLevel ?? (() => 0);
   const safeGetMaster = getMasterLevel ?? (() => 0);
   const safeSetEQ = setTrackEQ ?? (() => {});
@@ -214,6 +223,7 @@ export default function Mixer({ tracks, onTrackUpdate, isPlaying, getTrackLevel,
           onEQChange={safeSetEQ}
           isMaster={false}
           onExportMidi={handleExportMidi}
+          onInsertToggle={onInsertToggle}
         />
       ))}
       <div style={{ width: 1, background: 'var(--border-default)', margin: '0 4px', flexShrink: 0 }} />

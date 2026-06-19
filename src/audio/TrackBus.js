@@ -35,13 +35,16 @@ export class TrackBus {
     this.analyser.smoothingTimeConstant = 0.6;
 
     // ── Chain ───────────────────────────────────────────
-    // input → eqLow → eqMid → eqHigh → fader → panner → analyser → master
+    // input → eqLow → eqMid → eqHigh → [inserts] → fader → panner → analyser → master
     this.eqLow.connect(this.eqMid);
     this.eqMid.connect(this.eqHigh);
-    this.eqHigh.connect(this.fader);
     this.fader.connect(this.panner);
     this.panner.connect(this.analyser);
     this.analyser.connect(masterInput);
+
+    // Insert effect slots (null = bypassed)
+    this._inserts = [null, null, null, null];
+    this._rebuildChain();
 
     // Sources connect to this entry point
     this.input = this.eqLow;
@@ -70,6 +73,30 @@ export class TrackBus {
     if (node) node.gain.linearRampToValueAtTime(gainDb, this.ctx.currentTime + 0.02);
   }
 
+  // ── Insert effects ────────────────────────────────────
+  _rebuildChain() {
+    try { this.eqHigh.disconnect(); } catch {}
+    this._inserts.forEach(ins => {
+      if (!ins) return;
+      try { ins.inputNode.disconnect(); } catch {}
+      try { ins.outputNode.disconnect(); } catch {}
+    });
+    let node = this.eqHigh;
+    for (const ins of this._inserts) {
+      if (!ins) continue;
+      node.connect(ins.inputNode);
+      node = ins.outputNode;
+    }
+    node.connect(this.fader);
+  }
+
+  setInsert(slot, effect) {
+    const old = this._inserts[slot];
+    if (old?.destroy) old.destroy();
+    this._inserts[slot] = effect ?? null;
+    this._rebuildChain();
+  }
+
   setEQFreq(band, hz) {
     const node = { low: this.eqLow, mid: this.eqMid, high: this.eqHigh }[band];
     if (node) node.frequency.value = hz;
@@ -87,6 +114,7 @@ export class TrackBus {
 
   // ── Teardown ─────────────────────────────────────────
   disconnect() {
+    this._inserts.forEach(ins => { if (ins?.destroy) ins.destroy(); });
     [this.eqLow, this.eqMid, this.eqHigh, this.fader, this.panner, this.analyser]
       .forEach(n => { try { n.disconnect(); } catch {} });
   }

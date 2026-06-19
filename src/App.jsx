@@ -378,6 +378,8 @@ export default function App() {
               onProbsChange={daw.setStepProbs}
               stepVels={daw.stepVels}
               onVelsChange={daw.setStepVels}
+              swing={daw.swing}
+              onSwingChange={daw.setSwing}
               currentBeat={daw.currentBeat}
               isPlaying={daw.isPlaying}
             />
@@ -410,6 +412,7 @@ export default function App() {
               setTrackEQ={daw.setTrackEQ}
               clips={daw.clips}
               bpm={bpm}
+              onInsertToggle={daw.setTrackInsert}
             />
           )}
           {bottomTab === 'synth' && (

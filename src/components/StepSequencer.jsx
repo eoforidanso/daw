@@ -111,11 +111,36 @@ export default function StepSequencer({
   tracks, steps, onStepsChange,
   stepProbs, onProbsChange,
   stepVels,  onVelsChange,
+  swing, onSwingChange,
   currentBeat, isPlaying,
 }) {
   const [showLibrary, setShowLibrary] = useState(false);
   const [showProb,    setShowProb]    = useState(false);
   const [showVel,     setShowVel]     = useState(false);
+
+  // ── Pattern A/B/C/D slots ─────────────────────────────────────
+  const [activeSlot,   setActiveSlot]   = useState(0);
+  const [patternSlots, setPatternSlots] = useState([null, null, null, null]);
+
+  const switchSlot = (newSlot) => {
+    if (newSlot === activeSlot) return;
+    const snapshot = { steps, probs: stepProbs ?? {}, vels: stepVels ?? {} };
+    const updated  = patternSlots.map((s, i) => i === activeSlot ? snapshot : s);
+    setPatternSlots(updated);
+    setActiveSlot(newSlot);
+    const target = updated[newSlot];
+    if (target) {
+      onStepsChange(target.steps);
+      onProbsChange?.(target.probs);
+      onVelsChange?.(target.vels);
+    } else {
+      const blank = Object.fromEntries(Object.keys(steps).map(k => [k, Array(16).fill(false)]));
+      const full  = Object.fromEntries(Object.keys(steps).map(k => [k, Array(16).fill(100)]));
+      onStepsChange(blank);
+      onProbsChange?.(full);
+      onVelsChange?.(full);
+    }
+  };
 
   const toggleStep = (trackName, idx) => {
     onStepsChange(prev => ({ ...prev, [trackName]: prev[trackName].map((v, i) => i === idx ? !v : v) }));
@@ -273,11 +298,11 @@ export default function StepSequencer({
       {/* ── Bottom controls ── */}
       <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'var(--text-muted)', letterSpacing: '0.15em' }}>PATTERN</span>
-        {['A','B','C','D'].map(p => (
-          <button key={p} style={{ width: 28, height: 20, borderRadius: 3, border: `1px solid ${p === 'A' ? 'var(--accent-cyan)' : 'var(--border-default)'}`, background: p === 'A' ? 'var(--accent-cyan-glow)' : 'var(--bg-element)', color: p === 'A' ? 'var(--accent-cyan)' : 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 10, cursor: 'pointer' }}>{p}</button>
+        {['A','B','C','D'].map((p, i) => (
+          <button key={p} onClick={() => switchSlot(i)} style={{ width: 28, height: 20, borderRadius: 3, border: `1px solid ${i === activeSlot ? 'var(--accent-cyan)' : 'var(--border-default)'}`, background: i === activeSlot ? 'var(--accent-cyan-glow)' : 'var(--bg-element)', color: i === activeSlot ? 'var(--accent-cyan)' : 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 10, cursor: 'pointer' }}>{p}</button>
         ))}
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'var(--text-muted)', marginLeft: 8 }}>SWING</span>
-        <input type="range" min="0" max="100" defaultValue={0} style={{ WebkitAppearance: 'none', width: 80, height: 3, background: 'var(--bg-section)', outline: 'none', borderRadius: 2 }} />
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: swing > 0 ? 'var(--accent-orange)' : 'var(--text-muted)', marginLeft: 8 }}>SWING {swing > 0 ? `${swing}%` : ''}</span>
+        <input type="range" min="0" max="100" value={swing ?? 0} onChange={e => onSwingChange?.(+e.target.value)} style={{ WebkitAppearance: 'none', width: 80, height: 3, background: 'var(--bg-section)', outline: 'none', borderRadius: 2, cursor: 'pointer' }} />
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 5, flexWrap: 'wrap' }}>
           {showVel && (

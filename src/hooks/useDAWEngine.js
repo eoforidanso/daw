@@ -1,5 +1,6 @@
 import { useReducer, useRef, useCallback, useState, useEffect } from 'react';
 import { engine }                       from '../audio/engine.js';
+import { createReverb, createDelay, createDistortion, createChorus } from '../audio/effects.js';
 import { Recorder }                     from '../audio/Recorder.js';
 import { midiEngine }                   from '../audio/MIDIEngine.js';
 import { applyAutomation }              from '../audio/AutomationEngine.js';
@@ -210,6 +211,7 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
   const [sequencerSteps, setSequencerSteps]  = useState(DEFAULT_STEPS);
   const [stepProbs, setStepProbs]            = useState(DEFAULT_PROBS);
   const [stepVels,  setStepVels]             = useState(DEFAULT_VELS);
+  const [swing, setSwing] = useState(0);
   // Arpeggiator
   const [arpEnabled,  setArpEnabled]  = useState(false);
   const [arpChord,    setArpChord]    = useState([]);
@@ -258,6 +260,8 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
   const audioCacheRef   = useRef(new Map()); // clipId → decoded AudioBuffer (for non-inline buffers)
   const probsRef        = useRef(DEFAULT_PROBS);
   const velsRef         = useRef(DEFAULT_VELS);
+  const swingRef        = useRef(0);
+  const trackInsertsRef = useRef(new Map());   // key: `${trackId}:${slot}` → effect instance
   const arpEnabledRef   = useRef(false);
   const arpRateRef      = useRef('1/8');
   const arpGateRef      = useRef(0.7);
@@ -268,6 +272,7 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
   synthParamsRef.current = synthParams;
   probsRef.current       = stepProbs;
   velsRef.current        = stepVels;
+  swingRef.current       = swing;
   const recorderRef  = useRef(new Recorder());
   const recStartRef  = useRef(0);
   const inputStreamRef   = useRef(null);
@@ -318,6 +323,9 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
     while (nextTimeRef.current < ctx.currentTime + 0.12) {
       const idx  = stepRef.current;
       const when = Math.max(ctx.currentTime, nextTimeRef.current - comp);
+      // Swing: push odd-numbered 16th steps (the "ands") forward in time
+      const swingOffset = (idx % 2 === 1) ? (swingRef.current / 100) * secsPerStep * 0.5 : 0;
+      const swungWhen   = Math.max(ctx.currentTime, when + swingOffset);
       const steps = stepsRef.current;
       const tr    = tracksRef.current;
       const muted = (name) => tr.find(x => x.name === name)?.mute ?? false;
@@ -327,7 +335,7 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
           const prob = probsRef.current[name]?.[idx] ?? 100;
           if (prob >= 100 || Math.random() * 100 < prob) {
             const vel = velsRef.current[name]?.[idx] ?? 100;
-            synthDrum(ctx, engine.masterGain, name, when, engine.getBus(tid), vel);
+            synthDrum(ctx, engine.masterGain, name, swungWhen, engine.getBus(tid), vel);
           }
         }
       });
@@ -684,6 +692,31 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
   const getTrackLevel = useCallback((trackId) => engine.getBus(trackId)?.getLevel() ?? 0, []);
   const getMasterLevel= useCallback(() => engine.getMasterLevel(), []);
 
+  const FX_FACTORIES = {
+    REV:  (ctx) => createReverb(ctx),
+    DLY:  (ctx) => createDelay(ctx),
+    DIST: (ctx) => createDistortion(ctx, { drive: 0.5 }),
+    CHO:  (ctx) => createChorus(ctx),
+  };
+
+  const setTrackInsert = useCallback((trackId, slot, effectType) => {
+    const bus = engine.getBus(trackId);
+    if (!bus) return;
+    const key = `${trackId}:${slot}`;
+    const old = trackInsertsRef.current.get(key);
+    if (old?.destroy) old.destroy();
+    trackInsertsRef.current.delete(key);
+    if (!effectType) {
+      bus.setInsert(slot, null);
+      return;
+    }
+    const factory = FX_FACTORIES[effectType];
+    if (!factory) return;
+    const effect = factory(engine.ctx);
+    trackInsertsRef.current.set(key, effect);
+    bus.setInsert(slot, effect);
+  }, []);
+
   // ── Warp markers ─────────────────────────────────────────────────
   const addWarpMarker = useCallback((clipId, marker) => {
     setWarpMarkers(prev => ({ ...prev, [clipId]: [...(prev[clipId] ?? []), marker] }));
@@ -775,6 +808,7 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
     sequencerSteps, setSequencerSteps,
     stepProbs, setStepProbs,
     stepVels,  setStepVels,
+    swing, setSwing,
     // Arp
     arpEnabled, setArpEnabled,
     arpChord,   setArpChord,
@@ -796,7 +830,7 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
     loadInputDevices, startInput, stopInput,
     getSystemLatency,
     // Mixer
-    setTrackEQ, getTrackLevel, getMasterLevel,
+    setTrackEQ, getTrackLevel, getMasterLevel, setTrackInsert,
     // Automation
     autoLanes, addAutoLane, removeAutoLane,
     addAutoPoint, updateAutoPoint, removeAutoPoint,
