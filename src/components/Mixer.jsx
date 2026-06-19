@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Knob from './Knob';
 import SpectrumEQ from './SpectrumEQ';
+import { MIDIExport } from '../audio/MIDIExport.js';
 
 // ── Live VU meter ─────────────────────────────────────────────────
 function VUMeter({ getLevel, active }) {
@@ -100,7 +101,7 @@ function InsertSlot({ name, color, active, onToggle }) {
 }
 
 // ── Channel strip ─────────────────────────────────────────────────
-function ChannelStrip({ track, onUpdate, getLevel, isPlaying, onEQChange, isMaster }) {
+function ChannelStrip({ track, onUpdate, getLevel, isPlaying, onEQChange, isMaster, onExportMidi }) {
   const [effects, setEffects] = useState({ REV: false, DLY: false, DIST: false, CHO: false });
   const color = isMaster ? 'var(--accent-cyan)' : track.color;
   const getBound = useCallback(() => getLevel(track.id), [getLevel, track.id]);
@@ -115,6 +116,13 @@ function ChannelStrip({ track, onUpdate, getLevel, isPlaying, onEQChange, isMast
           background: typeof color === 'string' && color.startsWith('var') ? 'var(--accent-cyan)' : color
         }} />
         <span className="mixer-channel-name">{track.name}</span>
+        {!isMaster && onExportMidi && (
+          <button
+            onClick={() => onExportMidi(track.id, track.name)}
+            title="Export MIDI"
+            style={{ marginLeft: 'auto', flexShrink: 0, padding: '0 3px', height: 12, borderRadius: 2, border: '1px solid var(--border-subtle)', background: 'var(--bg-element)', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 6, cursor: 'pointer', lineHeight: 1 }}
+          >.mid</button>
+        )}
       </div>
 
       {/* EQ */}
@@ -179,13 +187,18 @@ function ChannelStrip({ track, onUpdate, getLevel, isPlaying, onEQChange, isMast
 
 const MASTER = { id: 0, name: 'MASTER', color: 'var(--accent-cyan)', volume: 80, pan: 0, mute: false, solo: false };
 
-export default function Mixer({ tracks, onTrackUpdate, isPlaying, getTrackLevel, getMasterLevel, setTrackEQ }) {
-  // Fallback for when these props aren't provided yet
+export default function Mixer({ tracks, onTrackUpdate, isPlaying, getTrackLevel, getMasterLevel, setTrackEQ, clips, bpm }) {
   const safeGetLevel = getTrackLevel ?? (() => 0);
   const safeGetMaster = getMasterLevel ?? (() => 0);
   const safeSetEQ = setTrackEQ ?? (() => {});
 
   const masterGetLevel = useCallback(() => safeGetMaster(), [safeGetMaster]);
+
+  const handleExportMidi = useCallback((trackId, trackName) => {
+    const trackClips = (clips ?? []).filter(c => c.trackId === trackId && c.type === 'midi' && c.notes?.length > 0);
+    if (!trackClips.length) return;
+    MIDIExport.download(trackClips, bpm ?? 120, `${trackName.toLowerCase().replace(/\s+/g, '_')}.mid`);
+  }, [clips, bpm]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -200,6 +213,7 @@ export default function Mixer({ tracks, onTrackUpdate, isPlaying, getTrackLevel,
           isPlaying={isPlaying}
           onEQChange={safeSetEQ}
           isMaster={false}
+          onExportMidi={handleExportMidi}
         />
       ))}
       <div style={{ width: 1, background: 'var(--border-default)', margin: '0 4px', flexShrink: 0 }} />

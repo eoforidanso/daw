@@ -22,6 +22,7 @@ import SampleBrowserPanel      from './components/SampleBrowserPanel'
 import PerformanceMode         from './components/PerformanceMode'
 import ChordProgressionPanel   from './components/ChordProgressionPanel'
 import ArpeggiatorPanel        from './components/ArpeggiatorPanel'
+import SongSeedPanel           from './components/SongSeedPanel'
 import MelodyGenerator    from './components/MelodyGenerator'
 import QuantizerPanel     from './components/QuantizerPanel'
 import MixAssistantPanel  from './components/MixAssistantPanel'
@@ -375,6 +376,8 @@ export default function App() {
               onStepsChange={daw.setSequencerSteps}
               stepProbs={daw.stepProbs}
               onProbsChange={daw.setStepProbs}
+              stepVels={daw.stepVels}
+              onVelsChange={daw.setStepVels}
               currentBeat={daw.currentBeat}
               isPlaying={daw.isPlaying}
             />
@@ -384,7 +387,7 @@ export default function App() {
 
       <div className="daw-bottom">
         <div className="bottom-tabs">
-          {[['mixer','MIXER'],['synth','INSTRUMENT'],['effects','EFFECTS'],['plugins','PLUGINS'],['samples','SAMPLES'],['chords','CHORDS'],['arp','ARP'],['melody','AI MELODY'],['quant','QUANTIZE'],['warp','WARP'],['aimix','AI MIX'],['input','INPUT'],['aichat','AI ASSISTANT']].map(([id, label]) => (
+          {[['mixer','MIXER'],['synth','INSTRUMENT'],['effects','EFFECTS'],['plugins','PLUGINS'],['samples','SAMPLES'],['chords','CHORDS'],['arp','ARP'],['seed','SONG SEED'],['melody','AI MELODY'],['quant','QUANTIZE'],['warp','WARP'],['aimix','AI MIX'],['input','INPUT'],['aichat','AI ASSISTANT']].map(([id, label]) => (
             <button key={id} className={`bottom-tab ${bottomTab === id ? 'active' : ''}`}
               onClick={() => handleBottomTab(id)}>{label}</button>
           ))}
@@ -405,6 +408,8 @@ export default function App() {
               getTrackLevel={daw.getTrackLevel}
               getMasterLevel={daw.getMasterLevel}
               setTrackEQ={daw.setTrackEQ}
+              clips={daw.clips}
+              bpm={bpm}
             />
           )}
           {bottomTab === 'synth' && (
@@ -441,6 +446,14 @@ export default function App() {
               arpOctaves={daw.arpOctaves}   setArpOctaves={daw.setArpOctaves}
               arpGate={daw.arpGate}         setArpGate={daw.setArpGate}
               arpTrackId={daw.arpTrackId}   setArpTrackId={daw.setArpTrackId}
+            />
+          )}
+          {bottomTab === 'seed' && (
+            <SongSeedPanel
+              tracks={tracks}
+              arpChord={daw.arpChord}
+              onStepsChange={daw.setSequencerSteps}
+              dispatchClips={daw.dispatchClips}
             />
           )}
           {bottomTab === 'melody' && (

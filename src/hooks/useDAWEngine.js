@@ -131,6 +131,14 @@ function autoReducer(state, action) {
   }
 }
 
+// ── Default step velocity (100 = full) ───────────────────────────
+const DEFAULT_VELS = {
+  KICK:     Array(16).fill(100),
+  SNARE:    Array(16).fill(100),
+  'HI-HAT': Array(16).fill(100),
+  CLAP:     Array(16).fill(100),
+};
+
 // ── Default step probability (all steps fire 100% of the time) ───
 const DEFAULT_PROBS = {
   KICK:     Array(16).fill(100),
@@ -148,9 +156,10 @@ const DEFAULT_STEPS = {
 };
 
 // ── Drum sound generator ──────────────────────────────────────────
-function synthDrum(ctx, masterGain, type, time, trackBus) {
-  const dest = trackBus?.input ?? masterGain;
-  const noise = (dur) => {
+function synthDrum(ctx, masterGain, type, time, trackBus, velocity = 100) {
+  const dest   = trackBus?.input ?? masterGain;
+  const vScale = Math.max(0.01, Math.min(2, velocity / 100));
+  const noise  = (dur) => {
     const len = Math.floor(ctx.sampleRate * dur);
     const buf = ctx.createBuffer(1, len, ctx.sampleRate);
     const d   = buf.getChannelData(0);
@@ -162,30 +171,30 @@ function synthDrum(ctx, masterGain, type, time, trackBus) {
     o.connect(g); g.connect(dest);
     o.frequency.setValueAtTime(160, time);
     o.frequency.exponentialRampToValueAtTime(0.001, time + 0.44);
-    g.gain.setValueAtTime(1, time); g.gain.exponentialRampToValueAtTime(0.001, time + 0.44);
+    g.gain.setValueAtTime(vScale, time); g.gain.exponentialRampToValueAtTime(0.001, time + 0.44);
     o.start(time); o.stop(time + 0.5);
   } else if (type === 'SNARE') {
     const n = noise(0.18), g = ctx.createGain(), f = ctx.createBiquadFilter();
     f.type = 'bandpass'; f.frequency.value = 2800; f.Q.value = 0.9;
     n.connect(f); f.connect(g); g.connect(dest);
-    g.gain.setValueAtTime(0.8, time); g.gain.exponentialRampToValueAtTime(0.001, time + 0.18);
+    g.gain.setValueAtTime(0.8 * vScale, time); g.gain.exponentialRampToValueAtTime(0.001, time + 0.18);
     n.start(time); n.stop(time + 0.2);
     const o2 = ctx.createOscillator(), g2 = ctx.createGain();
     o2.connect(g2); g2.connect(dest); o2.frequency.value = 185;
-    g2.gain.setValueAtTime(0.3, time); g2.gain.exponentialRampToValueAtTime(0.001, time + 0.07);
+    g2.gain.setValueAtTime(0.3 * vScale, time); g2.gain.exponentialRampToValueAtTime(0.001, time + 0.07);
     o2.start(time); o2.stop(time + 0.1);
   } else if (type === 'HI-HAT') {
     const n = noise(0.07), g = ctx.createGain(), f = ctx.createBiquadFilter();
     f.type = 'highpass'; f.frequency.value = 9000;
     n.connect(f); f.connect(g); g.connect(dest);
-    g.gain.setValueAtTime(0.35, time); g.gain.exponentialRampToValueAtTime(0.001, time + 0.07);
+    g.gain.setValueAtTime(0.35 * vScale, time); g.gain.exponentialRampToValueAtTime(0.001, time + 0.07);
     n.start(time); n.stop(time + 0.09);
   } else if (type === 'CLAP') {
     [0, 0.008, 0.018].forEach(d => {
       const n = noise(0.1), g = ctx.createGain(), f = ctx.createBiquadFilter();
       f.type = 'bandpass'; f.frequency.value = 1200; f.Q.value = 0.6;
       n.connect(f); f.connect(g); g.connect(dest);
-      g.gain.setValueAtTime(0.5, time + d); g.gain.exponentialRampToValueAtTime(0.001, time + d + 0.1);
+      g.gain.setValueAtTime(0.5 * vScale, time + d); g.gain.exponentialRampToValueAtTime(0.001, time + d + 0.1);
       n.start(time + d); n.stop(time + d + 0.12);
     });
   }
@@ -200,6 +209,7 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
   const [currentBeat, setCurrentBeat]        = useState(-1);
   const [sequencerSteps, setSequencerSteps]  = useState(DEFAULT_STEPS);
   const [stepProbs, setStepProbs]            = useState(DEFAULT_PROBS);
+  const [stepVels,  setStepVels]             = useState(DEFAULT_VELS);
   // Arpeggiator
   const [arpEnabled,  setArpEnabled]  = useState(false);
   const [arpChord,    setArpChord]    = useState([]);
@@ -247,6 +257,7 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
   const schedNotesRef   = useRef(new Set());
   const audioCacheRef   = useRef(new Map()); // clipId → decoded AudioBuffer (for non-inline buffers)
   const probsRef        = useRef(DEFAULT_PROBS);
+  const velsRef         = useRef(DEFAULT_VELS);
   const arpEnabledRef   = useRef(false);
   const arpRateRef      = useRef('1/8');
   const arpGateRef      = useRef(0.7);
@@ -256,6 +267,7 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
   clipsRef.current       = clips;
   synthParamsRef.current = synthParams;
   probsRef.current       = stepProbs;
+  velsRef.current        = stepVels;
   const recorderRef  = useRef(new Recorder());
   const recStartRef  = useRef(0);
   const inputStreamRef   = useRef(null);
@@ -314,7 +326,8 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
         if (steps[name]?.[idx] && !muted(name)) {
           const prob = probsRef.current[name]?.[idx] ?? 100;
           if (prob >= 100 || Math.random() * 100 < prob) {
-            synthDrum(ctx, engine.masterGain, name, when, engine.getBus(tid));
+            const vel = velsRef.current[name]?.[idx] ?? 100;
+            synthDrum(ctx, engine.masterGain, name, when, engine.getBus(tid), vel);
           }
         }
       });
@@ -738,6 +751,7 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
     setProjectName(template.projectName ?? 'Untitled');
     setSequencerSteps(template.steps ?? {});
     setStepProbs(template.stepProbs ?? DEFAULT_PROBS);
+    setStepVels(template.stepVels  ?? DEFAULT_VELS);
   }, []);
 
   // ── Cleanup ──────────────────────────────────────────────────────
@@ -760,6 +774,7 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
     // Sequencer
     sequencerSteps, setSequencerSteps,
     stepProbs, setStepProbs,
+    stepVels,  setStepVels,
     // Arp
     arpEnabled, setArpEnabled,
     arpChord,   setArpChord,
