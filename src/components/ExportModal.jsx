@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
-import { Bouncer } from '../audio/Bouncer.js';
+import { Bouncer }     from '../audio/Bouncer.js';
+import { MIDIExport }  from '../audio/MIDIExport.js';
 
 const ACCENT = 'var(--accent-cyan)';
 
@@ -157,9 +158,21 @@ export default function ExportModal({ onClose, currentState, projectName = 'mix'
 
   const format   = FORMAT_OPTIONS.find(f => f.id === fmt);
   const duration = Bouncer.formatDuration(currentState?.bpm ?? 128, bars);
-  const hasSteps = Object.values(currentState?.steps ?? {}).some(p => p?.some(Boolean));
-  const hasClips = (currentState?.clips ?? []).some(c => c.type === 'midi' && c.notes?.length);
+  const hasSteps  = Object.values(currentState?.steps ?? {}).some(p => p?.some(Boolean));
+  const hasClips  = (currentState?.clips ?? []).some(c => c.type === 'midi' && c.notes?.length);
   const hasScenes = sceneGrid && tracks?.length > 0;
+  const midiClips = (currentState?.clips ?? []).filter(c => c.type === 'midi' && c.notes?.length > 0);
+  const hasMidi   = midiClips.length > 0;
+
+  const downloadAllMidi = () => {
+    MIDIExport.download(midiClips, currentState?.bpm ?? 128,
+      `${(projectName ?? 'mix').toLowerCase().replace(/\s+/g, '-')}.mid`);
+  };
+
+  const downloadOneMidi = (clip) => {
+    MIDIExport.download([clip], currentState?.bpm ?? 128,
+      `${(clip.name ?? 'clip').toLowerCase().replace(/\s+/g, '-')}.mid`);
+  };
 
   const handleBounce = useCallback(async () => {
     setStatus('bouncing'); setPct(0); setBlob(null); setErrMsg('');
@@ -255,11 +268,12 @@ export default function ExportModal({ onClose, currentState, projectName = 'mix'
             </div>
           </div>
 
-          {/* Tab bar (only shown if scenes available) */}
-          {hasScenes && (
+          {/* Tab bar */}
+          {(hasScenes || hasMidi) && (
             <div style={{ paddingInline: '20px', display: 'flex', gap: 0, borderBottom: '1px solid var(--border-faint)' }}>
               <button onClick={() => setTab('full')} style={tabBtn('full', 'FULL MIX')}>FULL MIX</button>
-              <button onClick={() => setTab('stems')} style={tabBtn('stems', 'STEMS BY SCENE')}>STEMS BY SCENE</button>
+              {hasMidi   && <button onClick={() => setTab('midi')}  style={tabBtn('midi',  'MIDI')}>MIDI FILES</button>}
+              {hasScenes && <button onClick={() => setTab('stems')} style={tabBtn('stems', 'STEMS')}>STEMS BY SCENE</button>}
             </div>
           )}
 
@@ -272,6 +286,53 @@ export default function ExportModal({ onClose, currentState, projectName = 'mix'
                 onRebounce={() => { setStatus('idle'); setBlob(null); }}
                 onDownload={handleDownload}
               />
+            )}
+
+            {tab === 'midi' && hasMidi && (
+              <div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 6, color: 'var(--text-muted)', letterSpacing: '0.12em', marginBottom: 10 }}>
+                  EXPORT MIDI CLIPS AS STANDARD .MID FILES — IMPORT INTO ANY DAW.
+                </div>
+                <button
+                  onClick={downloadAllMidi}
+                  style={{
+                    width: '100%', padding: '10px', borderRadius: 4, cursor: 'pointer', marginBottom: 10,
+                    border: `1px solid ${ACCENT}`, background: `${ACCENT}18`, color: ACCENT,
+                    fontFamily: 'var(--font-mono)', fontSize: 8, letterSpacing: '0.2em', fontWeight: 700,
+                  }}
+                >
+                  ↓  EXPORT ALL CLIPS AS ONE .MID
+                </button>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  {midiClips.map(clip => (
+                    <div key={clip.id} style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '6px 10px', borderRadius: 3,
+                      background: 'var(--bg-element)', border: '1px solid var(--border-faint)',
+                    }}>
+                      <div style={{ width: 8, height: 8, borderRadius: '50%', background: clip.color ?? ACCENT, flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {clip.name ?? 'Clip'}
+                        </div>
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 6, color: 'var(--text-muted)', marginTop: 1 }}>
+                          {clip.notes?.length ?? 0} notes · beat {clip.startBeat ?? 0}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => downloadOneMidi(clip)}
+                        style={{
+                          padding: '3px 10px', borderRadius: 3, cursor: 'pointer',
+                          border: `1px solid ${ACCENT}55`, background: 'none', color: ACCENT,
+                          fontFamily: 'var(--font-mono)', fontSize: 7, letterSpacing: '0.1em', flexShrink: 0,
+                        }}
+                      >
+                        ↓ .MID
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
 
             {hasScenes && tab === 'stems' && (

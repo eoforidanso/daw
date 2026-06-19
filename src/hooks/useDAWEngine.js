@@ -9,6 +9,27 @@ import { pluginRegistry }               from '../audio/PluginAPI.js';
 import { WarpEngine }                   from '../audio/WarpEngine.js';
 import '../plugins/index.js'; // self-registers built-ins
 
+// ── Arp sequence builder ──────────────────────────────────────────
+function buildArpSequence(chord, pattern, octaves) {
+  if (!chord?.length) return [];
+  const sorted = [...chord].sort((a, b) => a - b);
+  let notes = [];
+  for (let o = 0; o < octaves; o++) notes = [...notes, ...sorted.map(p => p + o * 12)];
+  switch (pattern) {
+    case 'down':   return [...notes].reverse();
+    case 'bounce': return notes.length < 2 ? notes : [...notes, ...[...notes].reverse().slice(1, -1)];
+    case 'random': {
+      const s = [...notes];
+      for (let i = s.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [s[i], s[j]] = [s[j], s[i]];
+      }
+      return s;
+    }
+    default: return notes;
+  }
+}
+
 // ── Real-time synth voice for MIDI clip playback ──────────────────
 function scheduleClipNote(ctx, pitch, time, durSec, trackId, params) {
   const freq = 440 * Math.pow(2, (pitch - 69) / 12);
@@ -110,6 +131,14 @@ function autoReducer(state, action) {
   }
 }
 
+// ── Default step probability (all steps fire 100% of the time) ───
+const DEFAULT_PROBS = {
+  KICK:     Array(16).fill(100),
+  SNARE:    Array(16).fill(100),
+  'HI-HAT': Array(16).fill(100),
+  CLAP:     Array(16).fill(100),
+};
+
 // ── Default step sequencer ────────────────────────────────────────
 const DEFAULT_STEPS = {
   KICK:    [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0].map(Boolean),
@@ -170,6 +199,15 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
   const [isRecording, setIsRecordingState]   = useState(false);
   const [currentBeat, setCurrentBeat]        = useState(-1);
   const [sequencerSteps, setSequencerSteps]  = useState(DEFAULT_STEPS);
+  const [stepProbs, setStepProbs]            = useState(DEFAULT_PROBS);
+  // Arpeggiator
+  const [arpEnabled,  setArpEnabled]  = useState(false);
+  const [arpChord,    setArpChord]    = useState([]);
+  const [arpRate,     setArpRate]     = useState('1/8');
+  const [arpPattern,  setArpPattern]  = useState('up');
+  const [arpOctaves,  setArpOctaves]  = useState(1);
+  const [arpGate,     setArpGate]     = useState(0.7);
+  const [arpTrackId,  setArpTrackId]  = useState(6);
   const [armedTracks, setArmedTracks]        = useState(new Set());
   const [selectedClipId, setSelectedClipId] = useState(null);
   const [projectName, setProjectName]        = useState('Untitled');
@@ -208,9 +246,16 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
   const synthParamsRef  = useRef(synthParams);
   const schedNotesRef   = useRef(new Set());
   const audioCacheRef   = useRef(new Map()); // clipId → decoded AudioBuffer (for non-inline buffers)
+  const probsRef        = useRef(DEFAULT_PROBS);
+  const arpEnabledRef   = useRef(false);
+  const arpRateRef      = useRef('1/8');
+  const arpGateRef      = useRef(0.7);
+  const arpTrackIdRef   = useRef(6);
+  const arpSeqRef       = useRef([]);
   // Always keep live: updated each render (safe — scheduler reads asynchronously)
-  clipsRef.current     = clips;
+  clipsRef.current       = clips;
   synthParamsRef.current = synthParams;
+  probsRef.current       = stepProbs;
   const recorderRef  = useRef(new Recorder());
   const recStartRef  = useRef(0);
   const inputStreamRef   = useRef(null);
@@ -228,6 +273,12 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
   useEffect(() => { armedRef.current  = armedTracks; },    [armedTracks]);
   useEffect(() => { devIdRef.current  = selectedDeviceId; },[selectedDeviceId]);
   useEffect(() => { autoRef.current   = autoLanes; },      [autoLanes]);
+  useEffect(() => { arpEnabledRef.current  = arpEnabled; },  [arpEnabled]);
+  useEffect(() => { arpRateRef.current     = arpRate; },     [arpRate]);
+  useEffect(() => { arpGateRef.current     = arpGate; },     [arpGate]);
+  useEffect(() => { arpTrackIdRef.current  = arpTrackId; },  [arpTrackId]);
+  useEffect(() => { arpSeqRef.current = buildArpSequence(arpChord, arpPattern, arpOctaves); },
+    [arpChord, arpPattern, arpOctaves]);
 
   // ── Boot track buses once on mount ──────────────────────────────
   useEffect(() => {
@@ -261,7 +312,10 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
       const pairs = [['KICK',1],['SNARE',2],['HI-HAT',3],['CLAP',4]];
       pairs.forEach(([name, tid]) => {
         if (steps[name]?.[idx] && !muted(name)) {
-          synthDrum(ctx, engine.masterGain, name, when, engine.getBus(tid));
+          const prob = probsRef.current[name]?.[idx] ?? 100;
+          if (prob >= 100 || Math.random() * 100 < prob) {
+            synthDrum(ctx, engine.masterGain, name, when, engine.getBus(tid));
+          }
         }
       });
       // Apply automation at this beat
@@ -318,6 +372,29 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
           }
         }
       });
+
+      // ── Arpeggiator scheduling ───────────────────────────────────
+      if (arpEnabledRef.current && arpSeqRef.current.length > 0) {
+        const rateMap      = { '1/4': 1, '1/8': 2, '1/16': 4, '1/32': 8 };
+        const stepsPerBeat = rateMap[arpRateRef.current] ?? 2;
+        const stepBeats    = 1 / stepsPerBeat;
+        const firstStep    = Math.ceil(beatNow * stepsPerBeat);
+        const lastStep     = Math.floor((beatNow + lookBeats) * stepsPerBeat);
+        for (let s = firstStep; s <= lastStep; s++) {
+          const absBeat = s * stepBeats;
+          if (absBeat >= beatNow && absBeat < beatNow + lookBeats) {
+            const key = `arp:${s}`;
+            if (!schedNotesRef.current.has(key)) {
+              schedNotesRef.current.add(key);
+              const seq    = arpSeqRef.current;
+              const pitch  = seq[((s % seq.length) + seq.length) % seq.length];
+              const when3  = Math.max(ctx.currentTime, engine.beatToTime(absBeat));
+              const durSec = Math.max(0.05, stepBeats * arpGateRef.current * spb);
+              scheduleClipNote(ctx, pitch, when3, durSec, arpTrackIdRef.current, synthParamsRef.current);
+            }
+          }
+        }
+      }
 
       const delay = Math.max(0, (when - ctx.currentTime) * 1000);
       setTimeout(() => { if (isPlayingRef.current) setCurrentBeat(idx); }, delay);
@@ -660,6 +737,7 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
     setPluginInstances({});
     setProjectName(template.projectName ?? 'Untitled');
     setSequencerSteps(template.steps ?? {});
+    setStepProbs(template.stepProbs ?? DEFAULT_PROBS);
   }, []);
 
   // ── Cleanup ──────────────────────────────────────────────────────
@@ -681,6 +759,15 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
     armedTracks, armTrack,
     // Sequencer
     sequencerSteps, setSequencerSteps,
+    stepProbs, setStepProbs,
+    // Arp
+    arpEnabled, setArpEnabled,
+    arpChord,   setArpChord,
+    arpRate,    setArpRate,
+    arpPattern, setArpPattern,
+    arpOctaves, setArpOctaves,
+    arpGate,    setArpGate,
+    arpTrackId, setArpTrackId,
     // Note playback
     playNote,
     // MIDI

@@ -147,7 +147,7 @@ function RomanLabel({ degree, scale }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function ChordProgressionPanel({ tracks, onInsert, playNote }) {
+export default function ChordProgressionPanel({ tracks, onInsert, playNote, onChordSelect }) {
   const [root,       setRoot]       = useState('C');
   const [scale,      setScale]      = useState('major');
   const [mood,       setMood]       = useState('happy');
@@ -175,6 +175,7 @@ export default function ChordProgressionPanel({ tracks, onInsert, playNote }) {
   const playChord = useCallback((chord, idx) => {
     clearTimers();
     setActiveIdx(idx);
+    onChordSelect?.(chord.notes);
     chord.notes.forEach((midi, i) => {
       const freq = 440 * Math.pow(2, (midi - 69) / 12);
       timersRef.current.push(setTimeout(() => playNote?.(freq, 0.9), i * 90));

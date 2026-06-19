@@ -21,6 +21,7 @@ import ExportModal             from './components/ExportModal'
 import SampleBrowserPanel      from './components/SampleBrowserPanel'
 import PerformanceMode         from './components/PerformanceMode'
 import ChordProgressionPanel   from './components/ChordProgressionPanel'
+import ArpeggiatorPanel        from './components/ArpeggiatorPanel'
 import MelodyGenerator    from './components/MelodyGenerator'
 import QuantizerPanel     from './components/QuantizerPanel'
 import MixAssistantPanel  from './components/MixAssistantPanel'
@@ -372,6 +373,8 @@ export default function App() {
               tracks={drumTracks}
               steps={daw.sequencerSteps}
               onStepsChange={daw.setSequencerSteps}
+              stepProbs={daw.stepProbs}
+              onProbsChange={daw.setStepProbs}
               currentBeat={daw.currentBeat}
               isPlaying={daw.isPlaying}
             />
@@ -381,7 +384,7 @@ export default function App() {
 
       <div className="daw-bottom">
         <div className="bottom-tabs">
-          {[['mixer','MIXER'],['synth','INSTRUMENT'],['effects','EFFECTS'],['plugins','PLUGINS'],['samples','SAMPLES'],['chords','CHORDS'],['melody','AI MELODY'],['quant','QUANTIZE'],['warp','WARP'],['aimix','AI MIX'],['input','INPUT'],['aichat','AI ASSISTANT']].map(([id, label]) => (
+          {[['mixer','MIXER'],['synth','INSTRUMENT'],['effects','EFFECTS'],['plugins','PLUGINS'],['samples','SAMPLES'],['chords','CHORDS'],['arp','ARP'],['melody','AI MELODY'],['quant','QUANTIZE'],['warp','WARP'],['aimix','AI MIX'],['input','INPUT'],['aichat','AI ASSISTANT']].map(([id, label]) => (
             <button key={id} className={`bottom-tab ${bottomTab === id ? 'active' : ''}`}
               onClick={() => handleBottomTab(id)}>{label}</button>
           ))}
@@ -424,6 +427,20 @@ export default function App() {
               tracks={tracks}
               onInsert={daw.insertMelody}
               playNote={daw.playNote}
+              onChordSelect={daw.setArpChord}
+            />
+          )}
+          {bottomTab === 'arp' && (
+            <ArpeggiatorPanel
+              tracks={tracks}
+              isPlaying={daw.isPlaying}
+              arpEnabled={daw.arpEnabled}   setArpEnabled={daw.setArpEnabled}
+              arpChord={daw.arpChord}       setArpChord={daw.setArpChord}
+              arpRate={daw.arpRate}         setArpRate={daw.setArpRate}
+              arpPattern={daw.arpPattern}   setArpPattern={daw.setArpPattern}
+              arpOctaves={daw.arpOctaves}   setArpOctaves={daw.setArpOctaves}
+              arpGate={daw.arpGate}         setArpGate={daw.setArpGate}
+              arpTrackId={daw.arpTrackId}   setArpTrackId={daw.setArpTrackId}
             />
           )}
           {bottomTab === 'melody' && (
