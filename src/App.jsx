@@ -17,9 +17,10 @@ import CollabModal        from './components/CollabModal'
 import AIAssistant        from './components/AIAssistant'
 import TutorialOverlay    from './components/TutorialOverlay'
 import MicroTour          from './components/MicroTour'
-import ExportModal        from './components/ExportModal'
-import SampleBrowserPanel from './components/SampleBrowserPanel'
-import PerformanceMode    from './components/PerformanceMode'
+import ExportModal             from './components/ExportModal'
+import SampleBrowserPanel      from './components/SampleBrowserPanel'
+import PerformanceMode         from './components/PerformanceMode'
+import ChordProgressionPanel   from './components/ChordProgressionPanel'
 import MelodyGenerator    from './components/MelodyGenerator'
 import QuantizerPanel     from './components/QuantizerPanel'
 import MixAssistantPanel  from './components/MixAssistantPanel'
@@ -70,7 +71,7 @@ export default function App() {
   const [perfGrid,   setPerfGrid]                 = useState(null);
   const [perfLabels, setPerfLabels]               = useState(null);
 
-  const daw = useDAWEngine(tracks, bpm);
+  const daw = useDAWEngine(tracks, bpm, synthParams);
 
   // Keep a ref to the latest state so the auto-save interval always reads fresh values
   const autoSaveRef = useRef({});
@@ -380,7 +381,7 @@ export default function App() {
 
       <div className="daw-bottom">
         <div className="bottom-tabs">
-          {[['mixer','MIXER'],['synth','INSTRUMENT'],['effects','EFFECTS'],['plugins','PLUGINS'],['samples','SAMPLES'],['melody','AI MELODY'],['quant','QUANTIZE'],['warp','WARP'],['aimix','AI MIX'],['input','INPUT'],['aichat','AI ASSISTANT']].map(([id, label]) => (
+          {[['mixer','MIXER'],['synth','INSTRUMENT'],['effects','EFFECTS'],['plugins','PLUGINS'],['samples','SAMPLES'],['chords','CHORDS'],['melody','AI MELODY'],['quant','QUANTIZE'],['warp','WARP'],['aimix','AI MIX'],['input','INPUT'],['aichat','AI ASSISTANT']].map(([id, label]) => (
             <button key={id} className={`bottom-tab ${bottomTab === id ? 'active' : ''}`}
               onClick={() => handleBottomTab(id)}>{label}</button>
           ))}
@@ -416,6 +417,13 @@ export default function App() {
               onAddPlugin={daw.addPlugin}
               onSetPluginParam={daw.setPluginParam}
               onRemovePlugin={daw.removePlugin}
+            />
+          )}
+          {bottomTab === 'chords' && (
+            <ChordProgressionPanel
+              tracks={tracks}
+              onInsert={daw.insertMelody}
+              playNote={daw.playNote}
             />
           )}
           {bottomTab === 'melody' && (

@@ -9,6 +9,35 @@ import { pluginRegistry }               from '../audio/PluginAPI.js';
 import { WarpEngine }                   from '../audio/WarpEngine.js';
 import '../plugins/index.js'; // self-registers built-ins
 
+// ── Real-time synth voice for MIDI clip playback ──────────────────
+function scheduleClipNote(ctx, pitch, time, durSec, trackId, params) {
+  const freq = 440 * Math.pow(2, (pitch - 69) / 12);
+  if (freq > ctx.sampleRate / 2 - 100 || freq < 20) return;
+  const bus  = engine.getBus(trackId);
+  const dest = bus?.input ?? engine.masterGain;
+  const { osc1Type = 'sawtooth', filterCutoff = 2000, filterRes = 20,
+          attack = 10, decay = 20, sustain = 70, release = 30 } = params ?? {};
+  const osc = ctx.createOscillator();
+  osc.type  = ['sawtooth','sine','square','triangle'].includes(osc1Type) ? osc1Type : 'sawtooth';
+  osc.frequency.value = freq;
+  const flt = ctx.createBiquadFilter();
+  flt.type = 'lowpass';
+  flt.frequency.value = Math.min(Math.max(80, filterCutoff), 18000);
+  flt.Q.value = Math.max(0.01, filterRes / 10);
+  const amp = ctx.createGain();
+  const atk = Math.max(0.003, attack  / 5000);
+  const dec = Math.max(0.003, decay   / 5000);
+  const sus = Math.max(0.001, sustain / 250);
+  const rel = Math.max(0.02,  release / 2000);
+  amp.gain.setValueAtTime(0, time);
+  amp.gain.linearRampToValueAtTime(sus, time + atk);
+  amp.gain.linearRampToValueAtTime(sus * 0.7, time + atk + dec);
+  amp.gain.setValueAtTime(sus * 0.7, time + durSec);
+  amp.gain.linearRampToValueAtTime(0, time + durSec + rel);
+  osc.connect(flt); flt.connect(amp); amp.connect(dest);
+  osc.start(time); osc.stop(time + durSec + rel + 0.05);
+}
+
 // ── ID helpers ────────────────────────────────────────────────────
 let _cid = 1, _nid = 1, _lid = 1;
 const cuid = () => `c${_cid++}`;
@@ -134,7 +163,7 @@ function synthDrum(ctx, masterGain, type, time, trackBus) {
 }
 
 // ── Main hook ─────────────────────────────────────────────────────
-export function useDAWEngine(tracks, bpm) {
+export function useDAWEngine(tracks, bpm, synthParams = {}) {
   const [clips, dispatchClips]     = useReducer(clipsReducer, null, makeInitialClips);
   const [autoLanes, dispatchAuto]  = useReducer(autoReducer, []);
   const [isPlaying, setIsPlayingState]       = useState(false);
@@ -167,14 +196,20 @@ export function useDAWEngine(tracks, bpm) {
   const [midiInputs, setMidiInputs]   = useState([]);
   const [selectedMidiId, setSelectedMidiId] = useState(null);
 
-  const timerRef     = useRef(null);
-  const stepRef      = useRef(0);
-  const nextTimeRef  = useRef(0);
-  const isPlayingRef = useRef(false);
-  const bpmRef       = useRef(bpm);
-  const tracksRef    = useRef(tracks);
-  const stepsRef     = useRef(sequencerSteps);
-  const autoRef      = useRef(autoLanes);
+  const timerRef        = useRef(null);
+  const stepRef         = useRef(0);
+  const nextTimeRef     = useRef(0);
+  const isPlayingRef    = useRef(false);
+  const bpmRef          = useRef(bpm);
+  const tracksRef       = useRef(tracks);
+  const stepsRef        = useRef(sequencerSteps);
+  const autoRef         = useRef(autoLanes);
+  const clipsRef        = useRef(clips);
+  const synthParamsRef  = useRef(synthParams);
+  const schedNotesRef   = useRef(new Set());
+  // Always keep live: updated each render (safe — scheduler reads asynchronously)
+  clipsRef.current     = clips;
+  synthParamsRef.current = synthParams;
   const recorderRef  = useRef(new Recorder());
   const recStartRef  = useRef(0);
   const inputStreamRef   = useRef(null);
@@ -232,6 +267,33 @@ export function useDAWEngine(tracks, bpm) {
       const beat = idx;
       applyAutomation(autoRef.current, beat, engine);
 
+      // ── MIDI clip note scheduling ──────────────────────────────
+      const LOOP_BEATS   = 32;
+      const beatNow      = engine.getCurrentBeat();
+      const spb          = 60 / bpmRef.current;
+      const lookBeats    = 0.13 / spb;
+      const loopCount    = Math.floor(beatNow / LOOP_BEATS);
+      clipsRef.current.forEach(clip => {
+        if (clip.type !== 'midi' || !clip.notes?.length) return;
+        const tr = tracksRef.current.find(t => t.id === clip.trackId);
+        if (!tr || tr.mute) return;
+        clip.notes.forEach(note => {
+          const localBeat = (clip.startBeat ?? 0) + (note.startBeat ?? 0);
+          for (let lc = loopCount; lc <= loopCount + 1; lc++) {
+            const absBeat = lc * LOOP_BEATS + localBeat;
+            if (absBeat >= beatNow && absBeat < beatNow + lookBeats) {
+              const key = `${clip.id}:${note.id}:${lc}`;
+              if (!schedNotesRef.current.has(key)) {
+                schedNotesRef.current.add(key);
+                const startT  = Math.max(ctx.currentTime, engine.beatToTime(absBeat));
+                const durSec  = Math.max(0.05, (note.durationBeats ?? 0.5) * spb);
+                scheduleClipNote(ctx, note.pitch, startT, durSec, clip.trackId, synthParamsRef.current);
+              }
+            }
+          }
+        });
+      });
+
       const delay = Math.max(0, (when - ctx.currentTime) * 1000);
       setTimeout(() => { if (isPlayingRef.current) setCurrentBeat(idx); }, delay);
       nextTimeRef.current += secsPerStep;
@@ -246,6 +308,7 @@ export function useDAWEngine(tracks, bpm) {
     if (playing) {
       engine.resume();
       engine.startTransport(bpmRef.current);
+      schedNotesRef.current.clear();
       stepRef.current = 0;
       nextTimeRef.current = engine.ctx.currentTime + 0.05;
       scheduler();

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Knob from './Knob';
+import SpectrumEQ from './SpectrumEQ';
 
 // ── Live VU meter ─────────────────────────────────────────────────
 function VUMeter({ getLevel, active }) {
@@ -187,7 +188,9 @@ export default function Mixer({ tracks, onTrackUpdate, isPlaying, getTrackLevel,
   const masterGetLevel = useCallback(() => safeGetMaster(), [safeGetMaster]);
 
   return (
-    <div className="mixer">
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+      <SpectrumEQ />
+      <div className="mixer" style={{ flex: 1, overflow: 'auto' }}>
       {tracks.map(t => (
         <ChannelStrip
           key={t.id}
@@ -208,6 +211,7 @@ export default function Mixer({ tracks, onTrackUpdate, isPlaying, getTrackLevel,
         onEQChange={() => {}}
         isMaster
       />
+      </div>
     </div>
   );
 }

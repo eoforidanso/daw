@@ -67,6 +67,13 @@ class AudioEngine {
   }
 
   // ── Master level ─────────────────────────────────────────────────
+  getFFTData() {
+    if (!this.masterAnalyser) return null;
+    const buf = new Uint8Array(this.masterAnalyser.frequencyBinCount);
+    this.masterAnalyser.getByteFrequencyData(buf);
+    return buf;
+  }
+
   getMasterLevel() {
     if (!this.masterAnalyser) return 0;
     const buf = new Float32Array(this.masterAnalyser.fftSize);
