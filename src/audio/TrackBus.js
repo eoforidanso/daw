@@ -97,6 +97,8 @@ export class TrackBus {
     this._rebuildChain();
   }
 
+  getInsert(slot) { return this._inserts[slot] ?? null; }
+
   setEQFreq(band, hz) {
     const node = { low: this.eqLow, mid: this.eqMid, high: this.eqHigh }[band];
     if (node) node.frequency.value = hz;

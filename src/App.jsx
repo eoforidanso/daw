@@ -380,6 +380,7 @@ export default function App() {
               onVelsChange={daw.setStepVels}
               swing={daw.swing}
               onSwingChange={daw.setSwing}
+              onMorphChange={daw.setMorphData}
               currentBeat={daw.currentBeat}
               isPlaying={daw.isPlaying}
             />

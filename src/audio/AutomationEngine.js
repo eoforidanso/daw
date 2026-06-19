@@ -4,11 +4,21 @@ let _ptId = 1;
 export const mkPtId = () => `pt${_ptId++}`;
 
 export const AUTO_PARAMS = {
-  volume:  { label: 'VOLUME',  min: 0,   max: 100, color: 'var(--accent-cyan)'    },
-  pan:     { label: 'PAN',     min: -50, max: 50,  color: 'var(--accent-purple)'  },
-  eqLow:   { label: 'EQ LOW',  min: -18, max: 18,  color: 'var(--accent-orange)'  },
-  eqMid:   { label: 'EQ MID',  min: -18, max: 18,  color: 'var(--accent-yellow)'  },
-  eqHigh:  { label: 'EQ HIGH', min: -18, max: 18,  color: 'var(--accent-blue)'    },
+  volume:        { label: 'VOLUME',       min: 0,   max: 100, color: 'var(--accent-cyan)'    },
+  pan:           { label: 'PAN',          min: -50, max: 50,  color: 'var(--accent-purple)'  },
+  eqLow:         { label: 'EQ LOW',       min: -18, max: 18,  color: 'var(--accent-orange)'  },
+  eqMid:         { label: 'EQ MID',       min: -18, max: 18,  color: 'var(--accent-yellow)'  },
+  eqHigh:        { label: 'EQ HIGH',      min: -18, max: 18,  color: 'var(--accent-blue)'    },
+  // ── Insert FX params (slot:key, values 0–100 scaled internally) ──
+  'fx:0:mix':    { label: 'REVERB MIX',   min: 0,   max: 100, color: '#4a9eff', group: 'FX'  },
+  'fx:0:size':   { label: 'REVERB SIZE',  min: 0,   max: 100, color: '#4a9eff', group: 'FX'  },
+  'fx:1:mix':    { label: 'DELAY MIX',    min: 0,   max: 100, color: '#00d4b4', group: 'FX'  },
+  'fx:1:time':   { label: 'DELAY TIME',   min: 0,   max: 100, color: '#00d4b4', group: 'FX'  },
+  'fx:1:feedback':{ label: 'DELAY FB',    min: 0,   max: 95,  color: '#00d4b4', group: 'FX'  },
+  'fx:2:drive':  { label: 'DIST DRIVE',   min: 0,   max: 100, color: '#ff6b35', group: 'FX'  },
+  'fx:2:mix':    { label: 'DIST MIX',     min: 0,   max: 100, color: '#ff6b35', group: 'FX'  },
+  'fx:3:mix':    { label: 'CHORUS MIX',   min: 0,   max: 100, color: '#c47fff', group: 'FX'  },
+  'fx:3:rate':   { label: 'CHORUS RATE',  min: 0,   max: 100, color: '#c47fff', group: 'FX'  },
 };
 
 // Linear interpolation between sorted breakpoints
@@ -40,6 +50,21 @@ export function applyAutomation(lanes, beat, engine) {
     for (const lane of trackLanes) {
       const val = interpolate(lane.points, beat);
       if (val === null) continue;
+      if (lane.param.startsWith('fx:')) {
+        const parts  = lane.param.split(':');
+        const slot   = parseInt(parts[1], 10);
+        const key    = parts[2];
+        const effect = bus.getInsert(slot);
+        if (effect) {
+          // Scale 0–100 range to each parameter's native range
+          let scaled = val / 100;
+          if (key === 'time')     scaled = val / 100 * 2;       // 0–2 s
+          if (key === 'feedback') scaled = val / 100 * 0.95;    // 0–0.95
+          if (key === 'rate')     scaled = val / 100 * 10;      // 0–10 Hz
+          effect.update(key, scaled);
+        }
+        continue;
+      }
       switch (lane.param) {
         case 'volume':  bus.setVolume(val); break;
         case 'pan':     bus.setPan(val);    break;

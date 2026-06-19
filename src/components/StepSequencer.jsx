@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { DRUM_PATTERNS } from '../audio/DrumPatterns.js';
 
 // ── Pattern library tile ──────────────────────────────────────────
@@ -112,6 +112,7 @@ export default function StepSequencer({
   stepProbs, onProbsChange,
   stepVels,  onVelsChange,
   swing, onSwingChange,
+  onMorphChange,
   currentBeat, isPlaying,
 }) {
   const [showLibrary, setShowLibrary] = useState(false);
@@ -119,8 +120,24 @@ export default function StepSequencer({
   const [showVel,     setShowVel]     = useState(false);
 
   // ── Pattern A/B/C/D slots ─────────────────────────────────────
-  const [activeSlot,   setActiveSlot]   = useState(0);
-  const [patternSlots, setPatternSlots] = useState([null, null, null, null]);
+  const [activeSlot,     setActiveSlot]     = useState(0);
+  const [patternSlots,   setPatternSlots]   = useState([null, null, null, null]);
+  const [morphTargetSlot, setMorphTargetSlot] = useState(null); // null = off
+  const [morphAmount,     setMorphAmount]     = useState(0);
+
+  // Notify engine whenever morph parameters change
+  useEffect(() => {
+    if (morphTargetSlot === null) {
+      onMorphChange?.({ amount: 0, targetSteps: null, targetVels: null });
+      return;
+    }
+    const target = patternSlots[morphTargetSlot];
+    onMorphChange?.({
+      amount:       morphAmount,
+      targetSteps:  target?.steps ?? null,
+      targetVels:   target?.vels  ?? null,
+    });
+  }, [morphAmount, morphTargetSlot, patternSlots, onMorphChange]);
 
   const switchSlot = (newSlot) => {
     if (newSlot === activeSlot) return;
@@ -303,6 +320,30 @@ export default function StepSequencer({
         ))}
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: swing > 0 ? 'var(--accent-orange)' : 'var(--text-muted)', marginLeft: 8 }}>SWING {swing > 0 ? `${swing}%` : ''}</span>
         <input type="range" min="0" max="100" value={swing ?? 0} onChange={e => onSwingChange?.(+e.target.value)} style={{ WebkitAppearance: 'none', width: 80, height: 3, background: 'var(--bg-section)', outline: 'none', borderRadius: 2, cursor: 'pointer' }} />
+
+        {/* ── Pattern morph ── */}
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: morphTargetSlot !== null ? '#ff6bcc' : 'var(--text-muted)', marginLeft: 8 }}>MORPH</span>
+        {['A','B','C','D'].map((p, i) => {
+          if (i === activeSlot) return null;
+          const isTarget = morphTargetSlot === i;
+          return (
+            <button key={p}
+              onClick={() => { setMorphTargetSlot(isTarget ? null : i); if (isTarget) setMorphAmount(0); }}
+              style={{ width: 22, height: 20, borderRadius: 3, cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 9,
+                border:      `1px solid ${isTarget ? '#ff6bcc' : 'var(--border-subtle)'}`,
+                background:  isTarget ? 'rgba(255,107,204,0.15)' : 'var(--bg-element)',
+                color:       isTarget ? '#ff6bcc' : 'var(--text-muted)',
+              }}>{p}</button>
+          );
+        })}
+        {morphTargetSlot !== null && (
+          <>
+            <input type="range" min="0" max="100" value={morphAmount}
+              onChange={e => setMorphAmount(+e.target.value)}
+              style={{ WebkitAppearance: 'none', width: 70, height: 3, background: 'var(--bg-section)', outline: 'none', borderRadius: 2, cursor: 'pointer' }} />
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#ff6bcc', minWidth: 26 }}>{morphAmount}%</span>
+          </>
+        )}
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 5, flexWrap: 'wrap' }}>
           {showVel && (

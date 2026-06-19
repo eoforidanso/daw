@@ -212,6 +212,7 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
   const [stepProbs, setStepProbs]            = useState(DEFAULT_PROBS);
   const [stepVels,  setStepVels]             = useState(DEFAULT_VELS);
   const [swing, setSwing] = useState(0);
+  const [morphData, setMorphData] = useState({ amount: 0, targetSteps: null, targetVels: null });
   // Arpeggiator
   const [arpEnabled,  setArpEnabled]  = useState(false);
   const [arpChord,    setArpChord]    = useState([]);
@@ -261,6 +262,7 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
   const probsRef        = useRef(DEFAULT_PROBS);
   const velsRef         = useRef(DEFAULT_VELS);
   const swingRef        = useRef(0);
+  const morphDataRef    = useRef({ amount: 0, targetSteps: null, targetVels: null });
   const trackInsertsRef = useRef(new Map());   // key: `${trackId}:${slot}` → effect instance
   const arpEnabledRef   = useRef(false);
   const arpRateRef      = useRef('1/8');
@@ -273,6 +275,7 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
   probsRef.current       = stepProbs;
   velsRef.current        = stepVels;
   swingRef.current       = swing;
+  morphDataRef.current   = morphData;
   const recorderRef  = useRef(new Recorder());
   const recStartRef  = useRef(0);
   const inputStreamRef   = useRef(null);
@@ -329,15 +332,25 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
       const steps = stepsRef.current;
       const tr    = tracksRef.current;
       const muted = (name) => tr.find(x => x.name === name)?.mute ?? false;
+      const { amount: morphAmt, targetSteps: mts, targetVels: mtv } = morphDataRef.current;
       const pairs = [['KICK',1],['SNARE',2],['HI-HAT',3],['CLAP',4]];
       pairs.forEach(([name, tid]) => {
-        if (steps[name]?.[idx] && !muted(name)) {
-          const prob = probsRef.current[name]?.[idx] ?? 100;
-          if (prob >= 100 || Math.random() * 100 < prob) {
-            const vel = velsRef.current[name]?.[idx] ?? 100;
-            synthDrum(ctx, engine.masterGain, name, swungWhen, engine.getBus(tid), vel);
-          }
+        if (muted(name)) return;
+        const onA = steps[name]?.[idx] ?? false;
+        const onB = morphAmt > 0 && mts ? (mts[name]?.[idx] ?? false) : false;
+        let effectiveOn   = onA;
+        let effectiveProb = probsRef.current[name]?.[idx] ?? 100;
+        if (morphAmt > 0 && mts) {
+          if (onA && !onB)       effectiveProb = Math.min(effectiveProb, 100 - morphAmt);
+          else if (!onA && onB) { effectiveOn = true; effectiveProb = morphAmt; }
+          // both on → full prob; both off → effectiveOn stays false
         }
+        if (!effectiveOn) return;
+        if (effectiveProb < 100 && Math.random() * 100 >= effectiveProb) return;
+        const velA = velsRef.current[name]?.[idx] ?? 100;
+        const velB = mtv?.[name]?.[idx] ?? 100;
+        const vel  = morphAmt === 0 ? velA : Math.round(velA + (velB - velA) * morphAmt / 100);
+        synthDrum(ctx, engine.masterGain, name, swungWhen, engine.getBus(tid), vel);
       });
       // Apply automation at this beat
       const beat = idx;
@@ -809,6 +822,7 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
     stepProbs, setStepProbs,
     stepVels,  setStepVels,
     swing, setSwing,
+    morphData, setMorphData,
     // Arp
     arpEnabled, setArpEnabled,
     arpChord,   setArpChord,
