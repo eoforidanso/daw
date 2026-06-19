@@ -207,6 +207,7 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
   const clipsRef        = useRef(clips);
   const synthParamsRef  = useRef(synthParams);
   const schedNotesRef   = useRef(new Set());
+  const audioCacheRef   = useRef(new Map()); // clipId → decoded AudioBuffer (for non-inline buffers)
   // Always keep live: updated each render (safe — scheduler reads asynchronously)
   clipsRef.current     = clips;
   synthParamsRef.current = synthParams;
@@ -292,6 +293,30 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
             }
           }
         });
+      });
+
+      // ── Audio clip scheduling ────────────────────────────────────
+      clipsRef.current.forEach(clip => {
+        if (clip.type !== 'audio') return;
+        const buf = clip.audioBuffer ?? audioCacheRef.current.get(clip.id);
+        if (!buf) return;
+        const tr2 = tracksRef.current.find(t => t.id === clip.trackId);
+        if (!tr2 || tr2.mute) return;
+        for (let lc = loopCount; lc <= loopCount + 1; lc++) {
+          const absBeat = lc * LOOP_BEATS + (clip.startBeat ?? 0);
+          if (absBeat >= beatNow && absBeat < beatNow + lookBeats) {
+            const key = `audio:${clip.id}:${lc}`;
+            if (!schedNotesRef.current.has(key)) {
+              schedNotesRef.current.add(key);
+              const when2 = Math.max(ctx.currentTime, engine.beatToTime(absBeat));
+              const src = ctx.createBufferSource();
+              src.buffer = buf;
+              const bus2 = engine.getBus(clip.trackId);
+              src.connect(bus2?.input ?? engine.masterGain);
+              src.start(when2);
+            }
+          }
+        }
       });
 
       const delay = Math.max(0, (when - ctx.currentTime) * 1000);
