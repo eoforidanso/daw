@@ -62,11 +62,11 @@ const STEPS = [
   {
     section: 'transport',
     id: 'project-tools',
-    title: 'Project & Collaboration',
-    body: 'PROJECT → rename, save, load from JSON, or start a new session. ☁ Cloud Sync → save the full session to the cloud and share a link. ⌛ Version History → snapshot labeled checkpoints and roll back. ⊕ COLLAB → host or join a real-time session where both users hear changes live.',
+    title: 'Project Tools',
+    body: 'PROJECT → rename, save, load from JSON, or start a new session. ⌛ Version History → snapshot labeled checkpoints and roll back anytime.',
     target: '.transport-right',
     position: 'below-left',
-    tip: 'Cloud Sync keeps up to 20 snapshots per browser. Version History keeps an unlimited local chain in IndexedDB.',
+    tip: 'Version History keeps an unlimited local chain in IndexedDB — nothing is lost.',
   },
   {
     section: 'transport',

@@ -134,6 +134,7 @@ function makeInitialClips() {
 function clipsReducer(state, action) {
   switch (action.type) {
     case 'SET_ALL':      return action.clips;
+    case 'ADD':
     case 'ADD_CLIP':     return [...state, action.clip];
     case 'REMOVE_CLIP':  return state.filter(c => c.id !== action.id);
     case 'UPDATE_CLIP':  return state.map(c => c.id === action.id ? { ...c, ...action.updates } : c);
@@ -282,6 +283,16 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
   // MIDI state
   const [midiInputs, setMidiInputs]   = useState([]);
   const [selectedMidiId, setSelectedMidiId] = useState(null);
+
+  // Undo / redo
+  const undoStackRef    = useRef([]);
+  const redoStackRef    = useRef([]);
+  const [undoTick, setUndoTick] = useState(0); // triggers canUndo/canRedo re-reads
+
+  // Mod matrix slots (live ref read by rAF loop)
+  const [modSlots, setModSlotsState] = useState([]);
+  const modSlotsRef = useRef([]);
+  modSlotsRef.current = modSlots;
 
   const timerRef        = useRef(null);
   const stepRef         = useRef(0);
@@ -880,6 +891,96 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
     dispatchClips({ type: 'UPDATE_CLIP', id: clipId, updates: { notes: newNotes } });
   }, []);
 
+  // ── Undo / Redo ───────────────────────────────────────────────────
+  const captureSnapshot = useCallback(() => ({
+    clips: clipsRef.current,
+    steps: stepsRef.current,
+    autoLanes: autoRef.current,
+  }), []);
+
+  const pushUndo = useCallback(() => {
+    undoStackRef.current = [...undoStackRef.current.slice(-49), captureSnapshot()];
+    redoStackRef.current = [];
+    setUndoTick(t => t + 1);
+  }, [captureSnapshot]);
+
+  const undo = useCallback(() => {
+    if (!undoStackRef.current.length) return;
+    const prev = undoStackRef.current[undoStackRef.current.length - 1];
+    redoStackRef.current = [captureSnapshot(), ...redoStackRef.current.slice(0, 49)];
+    undoStackRef.current = undoStackRef.current.slice(0, -1);
+    dispatchClips({ type: 'SET_ALL', clips: prev.clips });
+    setSequencerSteps(prev.steps);
+    dispatchAuto({ type: 'SET_ALL', lanes: prev.autoLanes });
+    setUndoTick(t => t + 1);
+  }, [captureSnapshot]);
+
+  const redo = useCallback(() => {
+    if (!redoStackRef.current.length) return;
+    const next = redoStackRef.current[0];
+    undoStackRef.current = [...undoStackRef.current.slice(-49), captureSnapshot()];
+    redoStackRef.current = redoStackRef.current.slice(1);
+    dispatchClips({ type: 'SET_ALL', clips: next.clips });
+    setSequencerSteps(next.steps);
+    dispatchAuto({ type: 'SET_ALL', lanes: next.autoLanes });
+    setUndoTick(t => t + 1);
+  }, [captureSnapshot]);
+
+  // Tracked versions of destructive actions that push to undo stack first
+  const dispatchClipsTracked = useCallback((action) => {
+    if (['ADD', 'ADD_CLIP', 'REMOVE_CLIP', 'UPDATE_CLIP', 'ADD_NOTE', 'REMOVE_NOTE'].includes(action.type)) {
+      pushUndo();
+    }
+    dispatchClips(action);
+  }, [pushUndo]);
+
+  const setSequencerStepsTracked = useCallback((steps) => {
+    pushUndo();
+    setSequencerSteps(steps);
+  }, [pushUndo]);
+
+  // ── Mod Matrix rAF loop ───────────────────────────────────────────
+  useEffect(() => {
+    let rafId;
+    const tick = () => {
+      const slots = modSlotsRef.current;
+      if (slots.some(s => s.enabled)) {
+        const t = engine.ctx?.currentTime ?? 0;
+        slots.forEach(slot => {
+          if (!slot.enabled || !slot.destTrackId || slot.depth === 0) return;
+          const bus = engine.getBus(Number(slot.destTrackId));
+          if (!bus) return;
+          let lfo = 0;
+          const rate = slot.sourceRate ?? 1;
+          switch (slot.sourceType) {
+            case 'LFO_SINE': lfo = Math.sin(2 * Math.PI * rate * t); break;
+            case 'LFO_TRI':  lfo = 2 * Math.abs(((rate * t) % 1) - 0.5) - 1; break;
+            case 'LFO_SQ':   lfo = Math.sin(2 * Math.PI * rate * t) >= 0 ? 1 : -1; break;
+            case 'RANDOM':   lfo = Math.random() * 2 - 1; break;
+            default:         lfo = 0;
+          }
+          const amount = (slot.depth / 100) * lfo;
+          switch (slot.destParam) {
+            case 'volume': bus.setVolume(Math.max(0, Math.min(2, 0.8 + amount))); break;
+            case 'pan':    bus.setPan(Math.max(-1, Math.min(1, amount))); break;
+            case 'fx:0:mix':
+            case 'fx:1:mix': {
+              const slotIdx = parseInt(slot.destParam.split(':')[1]);
+              const key = `${slot.destTrackId}:${slotIdx}`;
+              const fx = bus._inserts?.[slotIdx];
+              if (fx) try { fx.update('mix', Math.max(0, Math.min(1, 0.5 + amount * 0.5))); } catch {}
+              break;
+            }
+            default: break;
+          }
+        });
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Apply template / restore snapshot ────────────────────────────
   // Templates use template.name for display; snapshots use template.projectName.
   const applyTemplate = useCallback((template) => {
@@ -911,11 +1012,18 @@ export function useDAWEngine(tracks, bpm, synthParams = {}) {
     clips, selectedClipId, setSelectedClipId,
     addClip, removeClip, updateClip,
     addNote, removeNote, updateNote,
+    dispatchClips: dispatchClipsTracked,
+    // Undo / Redo
+    undo, redo,
+    canUndo: undoStackRef.current.length > 0,
+    canRedo: redoStackRef.current.length > 0,
+    // Mod Matrix
+    modSlots, setModSlots: setModSlotsState,
     // Transport
     isPlaying, setIsPlaying, isRecording, currentBeat,
     armedTracks, armTrack,
     // Sequencer
-    sequencerSteps, setSequencerSteps,
+    sequencerSteps, setSequencerSteps: setSequencerStepsTracked,
     stepProbs, setStepProbs,
     stepVels,  setStepVels,
     swing, setSwing,

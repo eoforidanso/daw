@@ -12,7 +12,7 @@ const Icon = ({ d, w = 11, h = 11 }) => (
   <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}><path d={d} fill="currentColor"/></svg>
 );
 
-export default function TransportBar({ isPlaying, onPlayToggle, bpm, onBpmChange, onProjectOpen, onCloudOpen, onVersionOpen, onCollabOpen, onAudioOpen, onTutorialOpen, onExportOpen, onStemExport, projectName, lastSaved, collabSession, autoRecording, onAutoRecordToggle }) {
+export default function TransportBar({ isPlaying, onPlayToggle, bpm, onBpmChange, onProjectOpen, onVersionOpen, onTutorialOpen, onExportOpen, onStemExport, projectName, lastSaved, autoRecording, onAutoRecordToggle }) {
   const [isRecording, setIsRecording] = useState(false);
   const [isLooping, setIsLooping] = useState(true);
   const [isMetronome, setIsMetronome] = useState(false);
@@ -185,64 +185,6 @@ export default function TransportBar({ isPlaying, onPlayToggle, bpm, onBpmChange
           onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-default)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
         >
           ⌛
-        </button>
-
-        {/* Collaboration */}
-        <button
-          onClick={onCollabOpen}
-          title={collabSession ? `In session: ${collabSession.code}` : 'Start Collaboration'}
-          style={{
-            height: 26, borderRadius: 3, padding: '0 7px',
-            border: `1px solid ${collabSession ? 'var(--accent-blue)' : 'var(--border-default)'}`,
-            background: collabSession ? 'rgba(74,158,255,0.1)' : 'none',
-            color: collabSession ? 'var(--accent-blue)' : 'var(--text-muted)',
-            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
-            fontFamily: 'var(--font-mono)', fontSize: 7, letterSpacing: '0.1em',
-            transition: 'all 0.1s',
-          }}
-          onMouseEnter={e => { if (!collabSession) { e.currentTarget.style.borderColor = 'var(--accent-blue)'; e.currentTarget.style.color = 'var(--accent-blue)'; } }}
-          onMouseLeave={e => { if (!collabSession) { e.currentTarget.style.borderColor = 'var(--border-default)'; e.currentTarget.style.color = 'var(--text-muted)'; } }}
-        >
-          {collabSession ? (
-            <>
-              <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--accent-blue)', boxShadow: '0 0 4px var(--accent-blue)' }} />
-              LIVE
-            </>
-          ) : '⊕ COLLAB'}
-        </button>
-
-        {/* Cloud Audio */}
-        <button
-          onClick={onAudioOpen}
-          title="Cloud Audio Storage"
-          style={{
-            width: 26, height: 26, borderRadius: 3,
-            border: '1px solid var(--border-default)', background: 'none',
-            color: 'var(--text-muted)', cursor: 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 13, transition: 'all 0.1s',
-          }}
-          onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent-cyan)'; e.currentTarget.style.color = 'var(--accent-cyan)'; }}
-          onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-default)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
-        >
-          ♫
-        </button>
-
-        {/* Cloud Sync */}
-        <button
-          onClick={onCloudOpen}
-          title="Cloud Sync"
-          style={{
-            width: 26, height: 26, borderRadius: 3,
-            border: '1px solid var(--border-default)', background: 'none',
-            color: 'var(--text-muted)', cursor: 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 14, transition: 'all 0.1s',
-          }}
-          onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent-blue)'; e.currentTarget.style.color = 'var(--accent-blue)'; }}
-          onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-default)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
-        >
-          ☁
         </button>
 
         {/* Project name + save/load */}

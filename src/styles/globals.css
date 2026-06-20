@@ -372,6 +372,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg-void); }
   display: flex; align-items: stretch; height: 26px;
   background: var(--bg-void); border-bottom: 1px solid var(--border-default);
   padding-left: 8px; gap: 1px; flex-shrink: 0;
+  overflow-x: auto; white-space: nowrap;
 }
 .bottom-tab {
   padding: 0 14px; background: transparent; border: none;

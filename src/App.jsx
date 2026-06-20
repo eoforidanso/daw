@@ -10,10 +10,7 @@ import PluginRack         from './components/PluginRack'
 import ProjectModal       from './components/ProjectModal'
 import TemplateModal      from './components/TemplateModal'
 import RestoreModal       from './components/RestoreModal'
-import CloudSyncModal     from './components/CloudSyncModal'
-import CloudAudioModal    from './components/CloudAudioModal'
 import VersionHistoryModal from './components/VersionHistoryModal'
-import CollabModal        from './components/CollabModal'
 import AIAssistant        from './components/AIAssistant'
 import TutorialOverlay    from './components/TutorialOverlay'
 import MicroTour          from './components/MicroTour'
@@ -31,6 +28,7 @@ import LFODesigner        from './components/LFODesigner'
 import MelodicSequencer   from './components/MelodicSequencer'
 import ModMatrix          from './components/ModMatrix'
 import HighlifePanel      from './components/HighlifePanel'
+import AmapianoPanel     from './components/AmapianoPanel'
 import { useDAWEngine }   from './hooks/useDAWEngine'
 import { AutoSave }       from './audio/AutoSave.js'
 import { VersionHistory } from './audio/VersionHistory.js'
@@ -64,14 +62,10 @@ export default function App() {
 
   const [showRestoreModal, setShowRestoreModal]   = useState(!!draft);
   const [showProject, setShowProject]             = useState(false);
-  const [showCloud, setShowCloud]                 = useState(false);
   const [showVersionHistory, setShowVersionHistory] = useState(false);
-  const [showCollab, setShowCollab]               = useState(false);
-  const [showCloudAudio, setShowCloudAudio]       = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(!draft);
   const [lastSaved, setLastSaved]                 = useState(null);
   const [recents, setRecents]                     = useState(() => AutoSave.getRecents());
-  const [collabSession, setCollabSession]         = useState(null);
   const [currentVersionId, setCurrentVersionId]   = useState(null);
   const [showTutorial, setShowTutorial]           = useState(false);
   const [showExport, setShowExport]               = useState(false);
@@ -79,6 +73,17 @@ export default function App() {
   const [perfLabels, setPerfLabels]               = useState(null);
 
   const daw = useDAWEngine(tracks, bpm, synthParams);
+
+  // Undo / Redo keyboard shortcuts
+  useEffect(() => {
+    const handler = (e) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); daw.undo(); }
+      if ((e.key === 'z' && e.shiftKey) || e.key === 'y') { e.preventDefault(); daw.redo(); }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [daw.undo, daw.redo]);
 
   // Keep a ref to the latest state so the auto-save interval always reads fresh values
   const autoSaveRef = useRef({});
@@ -154,11 +159,6 @@ export default function App() {
     setShowTemplateModal(true);
   }, []);
 
-  const handleCloudOpen = useCallback((snapshot) => {
-    setShowCloud(false);
-    handleApplyTemplate(snapshot);
-  }, [handleApplyTemplate]);
-
   const handleVersionSnapshot = useCallback((label) => {
     const entry = VersionHistory.snapshot(autoSaveRef.current, label);
     setCurrentVersionId(entry.id);
@@ -177,11 +177,6 @@ export default function App() {
       setTimeout(() => setMicroTourTab(id), 50);
     }
   }, []);
-
-  const handleCollabJoinSnapshot = useCallback((snapshot) => {
-    handleApplyTemplate(snapshot);
-    setShowCollab(false);
-  }, [handleApplyTemplate]);
 
   const handleAutomate = useCallback((actions) => {
     actions.forEach(action => {
@@ -236,32 +231,12 @@ export default function App() {
         <TemplateModal onSelect={handleApplyTemplate} recents={recents} />
       )}
 
-      {showCloud && (
-        <CloudSyncModal
-          onClose={() => setShowCloud(false)}
-          onOpenProject={handleCloudOpen}
-          currentState={autoSaveRef.current}
-        />
-      )}
-
-      {showCloudAudio && (
-        <CloudAudioModal onClose={() => setShowCloudAudio(false)} />
-      )}
-
       {showVersionHistory && (
         <VersionHistoryModal
           onClose={() => setShowVersionHistory(false)}
           onRestore={handleVersionRestore}
           onSnapshot={handleVersionSnapshot}
           currentVersionId={currentVersionId}
-        />
-      )}
-
-      {showCollab && (
-        <CollabModal
-          onClose={() => setShowCollab(false)}
-          currentState={autoSaveRef.current}
-          onJoinSnapshot={handleCollabJoinSnapshot}
         />
       )}
 
@@ -302,14 +277,10 @@ export default function App() {
         onBpmChange={setBpm}
         projectName={daw.projectName}
         onProjectOpen={() => setShowProject(true)}
-        onCloudOpen={() => setShowCloud(true)}
         onVersionOpen={() => setShowVersionHistory(true)}
-        onCollabOpen={() => setShowCollab(true)}
-        onAudioOpen={() => setShowCloudAudio(true)}
         onTutorialOpen={() => setShowTutorial(true)}
         onExportOpen={() => setShowExport(true)}
         lastSaved={lastSaved}
-        collabSession={collabSession}
         autoRecording={daw.autoRecording}
         onAutoRecordToggle={() => daw.setAutoRecording(v => !v)}
         onStemExport={handleStemExport}
@@ -413,7 +384,7 @@ export default function App() {
 
       <div className="daw-bottom">
         <div className="bottom-tabs">
-          {[['mixer','MIXER'],['synth','INSTRUMENT'],['effects','EFFECTS'],['plugins','PLUGINS'],['samples','SAMPLES'],['chords','CHORDS'],['arp','ARP'],['seed','SONG SEED'],['highlife','HIGHLIFE'],['melody','AI MELODY'],['melodic','MELODIC SEQ'],['lfo','LFO'],['modmatrix','MOD MATRIX'],['quant','QUANTIZE'],['warp','WARP'],['aimix','AI MIX'],['input','INPUT'],['aichat','AI ASSISTANT']].map(([id, label]) => (
+          {[['mixer','MIXER'],['synth','INSTRUMENT'],['effects','EFFECTS'],['plugins','PLUGINS'],['samples','SAMPLES'],['chords','CHORDS'],['arp','ARP'],['seed','SONG SEED'],['highlife','HIGHLIFE'],['amapiano','AMAPIANO'],['melody','AI MELODY'],['melodic','MELODIC SEQ'],['lfo','LFO'],['modmatrix','MOD MATRIX'],['quant','QUANTIZE'],['warp','WARP'],['aimix','AI MIX'],['input','INPUT'],['aichat','AI ASSISTANT']].map(([id, label]) => (
             <button key={id} className={`bottom-tab ${bottomTab === id ? 'active' : ''}`}
               onClick={() => handleBottomTab(id)}>{label}</button>
           ))}
@@ -512,6 +483,16 @@ export default function App() {
               tracks={tracks}
               arpChord={daw.arpChord}
               onStepsChange={daw.setSequencerSteps}
+              onBpmChange={setBpm}
+              dispatchClips={daw.dispatchClips}
+            />
+          )}
+          {bottomTab === 'amapiano' && (
+            <AmapianoPanel
+              tracks={tracks}
+              arpChord={daw.arpChord}
+              onStepsChange={daw.setSequencerSteps}
+              onBpmChange={setBpm}
               dispatchClips={daw.dispatchClips}
             />
           )}
@@ -539,7 +520,7 @@ export default function App() {
           {bottomTab === 'modmatrix' && (
             <ModMatrix
               tracks={tracks}
-              onModSlotsChange={() => {}}
+              onModSlotsChange={daw.setModSlots}
             />
           )}
           {bottomTab === 'quant' && (
